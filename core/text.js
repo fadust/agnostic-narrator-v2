@@ -4,7 +4,7 @@ export const FALLBACK_NOTE = 'The director has no notes ready for this turn. Nar
 
 const QUOTED_DIRECTOR_CODE = String.raw`["“][ \t]*\x60[ \t]*<(director_notes|story_context)>[\s\S]*?</\1>[ \t]*\x60`;
 
-/** Patterns for director text that must never stay in a saved reply. Source strings, so they can be reused as ST regex scripts. */
+/** Cleanup rules shared by runtime replacement and the card's SillyTavern regex scripts. */
 export const LEAK_PATTERNS = [
     // Take the wrapper with the block. A quote followed by speech is the opening quote of the real line.
     { name: 'quoted director code at line end', source: String.raw`(?:[ \t]+|(?<![^\s:*]))${QUOTED_DIRECTOR_CODE}[ \t]*["”][ \t]*(?=(?:\*\*)?[ \t]*\r?$)`, flags: 'gim' },
@@ -16,12 +16,10 @@ export const LEAK_PATTERNS = [
     { name: 'stray closing tag', source: '</director_notes>[ \\t]*', flags: 'gi' },
     { name: 'story context block', source: '<story_context>[\\s\\S]*?</story_context>\\s*', flags: 'gi' },
     { name: 'unclosed story context', source: '<story_context>[\\s\\S]*$', flags: 'gi' },
-];
+].map(rule => ({ ...rule, pattern: new RegExp(rule.source, rule.flags), replacement: '' }));
 
 export function stripDirector(text) {
-    let out = String(text ?? '');
-    for (const p of LEAK_PATTERNS) out = out.replace(new RegExp(p.source, p.flags), '');
-    return out.trim();
+    return replaceMatches(text, LEAK_PATTERNS).trim();
 }
 
 export const DIALOGUE_FIXES = [
@@ -29,11 +27,15 @@ export const DIALOGUE_FIXES = [
     { name: 'blank dialogue prefix', pattern: /^([ \t]*(?:\*\*)?[\p{L}\p{M}][\p{L}\p{M}\p{N} .’'-]{0,60}(?:\*\*)?[ \t]*:(?:\*\*)?[ \t]*)["“](?:[ \t]*\x60[ \t]+\x60[ \t]*|[ \t]+)(?=["“]\S[^\r\n"“”]*["”])/gmu },
     // An empty quoted string or blank code span after a finished sentence, before any closing bold markers.
     { name: 'blank dialogue suffix', pattern: /([.!?…])[ \t]+(?:"(?:[ \t]*\x60[ \t]+\x60[ \t]*)?[ \t]*"|“[ \t]*”)(?:[ \t]|&#x20;)*(?=(?:\*\*)?[ \t]*\r?$)/gmu },
-];
+].map(({ name, pattern }) => ({ name, pattern, source: pattern.source, flags: pattern.flags, replacement: '$1' }));
 
 export function cleanDialogue(text) {
+    return replaceMatches(text, DIALOGUE_FIXES);
+}
+
+function replaceMatches(text, rules) {
     let out = String(text ?? '');
-    for (const { pattern } of DIALOGUE_FIXES) out = out.replace(pattern, '$1');
+    for (const { pattern, replacement } of rules) out = out.replace(pattern, replacement);
     return out;
 }
 

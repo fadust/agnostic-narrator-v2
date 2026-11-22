@@ -140,11 +140,13 @@ console.log('Solo chat');
 await ev(({ main, maxTokens }) => {
     const settings = SillyTavern.getContext().chatCompletionSettings;
     settings.prompts.find(x => x.identifier === 'main').content = main;
+    settings.prompts.find(x => x.identifier === 'jailbreak').content = 'Let the present scene carry the ending.';
     settings.openai_max_tokens = maxTokens;
-}, { main: presetMain('Mature'), maxTokens: preset('Mature').openai_max_tokens });
+}, { main: presetMain('Mature').replace('Aim for 500 tokens', 'Aim for 700 tokens'), maxTokens: preset('Mature').openai_max_tokens });
 await importCard(readFileSync(join(assets, 'Narrator.card.json'), 'utf8'), 'Narrator');
 await ev(() => {
     const c = SillyTavern.getContext();
+    c.powerUserSettings.prefer_character_jailbreak = true;
     c.powerUserSettings.persona_description = 'Rowan is a wiry courier, fast on their feet, new to the village.';
     // Not awaited: SillyTavern asks whether to import the card's embedded lorebook and waits for the answer.
     c.selectCharacterById(c.characters.findIndex(x => x.name === 'Narrator'));
@@ -188,6 +190,10 @@ await check('turn 1: brief sits just before the player message; story block and 
     assert(!text.includes('Horror craft:') && !text.includes('{{if'), 'ungated or unresolved lore');
     assert((text.match(/<director_notes>\n/g) ?? []).length === 1, 'brief sent more than once');
     assert(String(p[userAt].content).includes(mixedTurn), 'the user dialogue or action was lost in prompt assembly');
+    assert(p.slice(userAt + 1).some(message => String(message.content).includes('Let the present scene carry the ending.')),
+        'the selected preset lost its post-history instruction');
+    assert(!text.includes('Open differently from your last few replies.'), 'the retired card post-history rule reached the model');
+    assert(text.includes('Aim for 700 tokens') && !/\b500 tokens\b/.test(text), 'the preset length was overridden by the card');
     assert(text.includes('weave both into the same passage') && text.includes('Preserve the player\'s spoken words'),
         'the card and preset must both require rendering the supplied dialogue and action');
     assert(presetMain('PG').includes('weave both into the same passage'), 'the PG preset lost the shared instruction');

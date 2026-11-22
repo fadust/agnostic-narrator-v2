@@ -11,7 +11,6 @@ const root = join(here, '..');
 const dist = join(root, 'dist');
 mkdirSync(dist, { recursive: true });
 const read = (p) => readFileSync(join(here, p), 'utf8').trim();
-const POST_HISTORY = '{{original}}\n[Length: about 500 tokens. Up to 1,000 only for action shown blow by blow. A long player message does not need a longer reply. Open differently from your last few replies.]';
 
 const NAME = 'Narrator';
 const SOLO_OPENING = '*The page is blank, and the story is yours to open.*\n\nTell me where we begin: a place, a moment, something {{user}} is doing. Or simply act, and the world will answer.';
@@ -66,11 +65,11 @@ const bookEntries = CRAFT.map(([flag, name, text], i) => ({
 // ---------------------------------------------------------------- regex scripts
 
 let n = 0;
-const script = (scriptName, p, extra = {}) => ({
+const script = (scriptName, rule, extra = {}) => ({
     id: `nd-regex-${++n}`,
     scriptName,
-    findRegex: `/${p.source}/${p.flags}`,
-    replaceString: '',
+    findRegex: `/${rule.source}/${rule.flags}`,
+    replaceString: rule.replacement,
     trimStrings: [],
     placement: [2, 6],          // AI output and reasoning
     disabled: false,
@@ -89,9 +88,9 @@ const regexScripts = [
     ...LEAK_PATTERNS.map(p => script(`Narrator: hide ${p.name} (display)`, p, { markdownOnly: true })),
     // Prompt: cleans replies saved before the card was installed.
     ...LEAK_PATTERNS.map(p => script(`Narrator: clean ${p.name} (prompt)`, p, { promptOnly: true })),
-    ...DIALOGUE_FIXES.flatMap(({ name, pattern }) => [
-        script(`Narrator: remove ${name}`, pattern, { placement: [2], replaceString: '$1' }),
-        script(`Narrator: hide ${name}`, pattern, { placement: [2], replaceString: '$1', markdownOnly: true, promptOnly: true }),
+    ...DIALOGUE_FIXES.flatMap(rule => [
+        script(`Narrator: remove ${rule.name}`, rule, { placement: [2] }),
+        script(`Narrator: hide ${rule.name}`, rule, { placement: [2], markdownOnly: true, promptOnly: true }),
     ]),
 ];
 
@@ -109,9 +108,7 @@ const card = {
         mes_example: '',
         creator_notes: 'A genre-agnostic narrator. Works alone as a plain narrator; with the Narrator Director extension it keeps canon, plans beats and adapts to the story material. Solo: put the cast in a lorebook or the scenario. Group: add this card and the cast, then run /director setup so only the narrator speaks. Personality, scenario and examples are empty on purpose: the voice comes from your story, not from this card.',
         system_prompt: '',
-        // After the chat history, where the model reads it last (owner, 22 Nov 2026: the only length rule sat at the top of
-        // the preset and replies doubled to imitate long player posts). {{original}} keeps the preset's own post-history text.
-        post_history_instructions: POST_HISTORY,
+        post_history_instructions: '',
         alternate_greetings: [],
         group_only_greetings: [GROUP_OPENING],
         tags: ['narrator', 'storyteller', 'game master'],

@@ -78,7 +78,7 @@ On a 47-turn test chat the director made about 2.3 calls per turn, or 4 to 5 on 
 | Part | Path | Purpose |
 | --- | --- | --- |
 | Director extension | repo root (`manifest.json`, `index.js`, `core/`, `st/`) | Record, memory, continuity, story spine, planning, notes, dynamic lore, inspector, `/director` |
-| Narrator card | `dist/Narrator.card.json` | Identity and rules, genre craft entries, regex scripts that strip leaked notes |
+| Narrator card | `dist/Narrator.card.json` | Storyteller role, Director note guide, story-specific craft lore and reply cleanup |
 | Companion presets | `dist/Narrator Companion (Mature).preset.json`, `dist/Narrator Companion (PG).preset.json` | Content stance and prose craft, one file per rating |
 | Quick replies | `dist/Narrator Director.quickreplies.json` | Buttons for common commands |
 | Fixture suite | `fixtures/`, `tools/fixtures.mjs` | Tests a director model before you rely on it |

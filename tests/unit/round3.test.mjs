@@ -28,11 +28,19 @@ test('with another extension, the narrator gets the director\'s line only for tu
     assert.doesNotMatch(block([1, 3]), /The last turns/, 'only the last 2 turns are ever candidates');
 });
 
-test('the card says embellishing changes how it is done, never what is done', () => {
-    const card = fs.readFileSync(new URL('../../card/src/description.md', import.meta.url), 'utf8');
-    assert.match(card, /enhance, enrich and embellish/);
-    assert.match(card, /changes how it is done/);
-    assert.match(card, /no extra action, gift, payment, promise, plan or line of speech/);
+test('both presets own the player rendering rules and the card supplies story context', () => {
+    const read = file => JSON.parse(fs.readFileSync(new URL(`../../dist/${file}`, import.meta.url), 'utf8'));
+    const card = read('Narrator.card.json').data;
+    assert.equal(card.post_history_instructions, '');
+    assert.match(card.description, /Follow the active preset/);
+    assert.match(card.description, /## Director notes/);
+    assert.doesNotMatch(card.description, /enhance, enrich and embellish|Aim for .* tokens/);
+    for (const label of ['PG', 'Mature']) {
+        const prompt = read(`Narrator Companion (${label}).preset.json`).prompts.find(p => p.identifier === 'main').content;
+        assert.match(prompt, /enhance, enrich and embellish/);
+        assert.match(prompt, /changes how it is done/);
+        assert.match(prompt, /no extra action, gift, payment, promise, plan or line of speech/);
+    }
 });
 
 test('the conclusion writer gets the scene and failure reasons, and may not invent scenery', () => {

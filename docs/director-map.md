@@ -101,7 +101,7 @@ Each turn costs about 2.3 director calls on average (measured on the 47-turn tes
 
 ## 4. What the narrator gets each turn
 
-- **The card** (`card/src/description.md`) and **preset** (`card/src/preset.md`). Length rule: about 500 tokens, up to about 1,000 only for action.
+- **The card** (`card/src/description.md`) sets the Narrator's role. The **preset** (`card/src/preset.md`) owns the reply length guidance. Its defaults are about 500 tokens, with room for up to about 1,000 when the scene needs more detail.
 - **`<story_context>`** (`buildStoryBlock`): premise, story profile, and summaries or chapters by memory mode.
 - **`<director_notes>`** (`buildBrief`, capped at 300 tokens): scene, scene intent, clue, tension, spotlight, cast lines with wants, the player character's line, attempt, watch, settled, status.
 - **Post-history line** (from the card, after the chat): length, "a long player message does not need a longer reply", vary the opening.
