@@ -5,6 +5,7 @@
 // Full disclosure: every setting has a control here, and everything the director holds is shown on some tab.
 
 import { failureHint, moduleLabel } from '../core/failures.js';
+import { beatText } from '../core/beat.js';
 import { AGE_GROUPS, ARC_TENSION, AXES, BANDS, BEAT_TYPES, CLUE_ROUTES, INITIATIVE, LETHALITY, SEVERITY, STAGES, STATS, STAT_BASELINE, TEMPERAMENTS, TEMPO } from '../core/enums.js';
 import { tellsFor } from '../core/social.js';
 import { splitByCast, summaryView } from '../core/record.js';
@@ -27,6 +28,9 @@ export function mountUi(api) {
     let dirty = false;
     let logModule = null;
     let recordPart = 'facts';
+    let recordQuery = '';
+    let renderedEpoch = director.epoch;
+    let returnFocus = null;
 
     // ------------------------------------------------------------ small builders
     const text = (f, v, ph = '') => `<input class="text_pole" data-f="${f}" value="${h(v ?? '')}" placeholder="${h(ph)}">`;
@@ -36,13 +40,18 @@ export function mountUi(api) {
     const number = (f, v, min, max) => `<input class="text_pole nd-small" type="number" data-f="${f}" value="${Number(v ?? 0)}" min="${min}" max="${max}">`;
     const select = (f, v, options) => `<select class="text_pole" data-f="${f}">${options.map(o => `<option value="${h(o)}" ${o === v ? 'selected' : ''}>${h(o)}</option>`).join('')}</select>`;
     const check = (f, v, label) => `<label class="nd-check"><input type="checkbox" data-f="${f}" ${v ? 'checked' : ''}> ${h(label)}</label>`;
-    const field = (label, control, hint = '') => `<div class="nd-field"><span>${h(label)}</span><div>${control}${hint ? `<small>${h(hint)}</small>` : ''}</div></div>`;
-    const button = (action, label, data = '') => `<span class="menu_button nd-button" data-act="${action}" ${data}>${h(label)}</span>`;
+    const field = (label, control, hint = '') => {
+        const tag = /^<(input|textarea|select)\b/.test(control) ? 'label' : 'div';
+        return `<${tag} class="nd-field"><span>${h(label)}</span><span class="nd-control">${control}${hint ? `<small>${h(hint)}</small>` : ''}</span></${tag}>`;
+    };
+    const button = (action, label, data = '') => `<button type="button" class="menu_button nd-button" data-act="${action}" ${data}>${h(label)}</button>`;
+    const iconButton = (icon, label, data = '', classes = '') => `<button type="button" class="nd-icon ${classes}" ${data} title="${h(label)}" aria-label="${h(label)}"><i class="${icon}" aria-hidden="true"></i></button>`;
     const pre = (v) => `<pre class="nd-pre">${h(typeof v === 'string' ? v : JSON.stringify(v, null, 2))}</pre>`;
     const lines = (v) => (Array.isArray(v) ? v.join('\n') : '');
     const fromLines = (s) => String(s ?? '').split('\n').map(x => x.trim()).filter(Boolean);
     const fromCommas = (s) => String(s ?? '').split(',').map(x => x.trim()).filter(Boolean);
     const empty = (what) => `<p class="nd-empty">${h(what)}</p>`;
+    const editedFields = form => new Set([...form.querySelectorAll('[data-nd-edited]')].map(el => el.dataset.f));
 
     /** Read every field inside a form block into a plain object. */
     function read(form) {
@@ -86,9 +95,9 @@ export function mountUi(api) {
             saved ? '' : 'new: save the spine before marking it',
         ].filter(Boolean).join(' · ');
         return `<div class="nd-sp-crit" data-id="${h(c.id ?? '')}">
-            <i class="${icon} nd-icon nd-sp-mark" ${saved ? `data-act="spine-mark" data-id="${h(c.id)}" data-mark="${NEXT_MARK[c.mark] ?? 'met'}"` : ''} title="${h(tip)}"></i>
-            <div class="nd-sp-crit-text">${wrapped('ctext', c.text, 'what has to happen')}${note ? `<small>${note}</small>` : ''}</div>
-            <i class="fa-solid fa-trash nd-icon" data-act="spine-remove" data-what="crit" title="Remove this criterion"></i>
+            ${saved ? iconButton(icon, tip, `data-act="spine-mark" data-id="${h(c.id)}" data-mark="${NEXT_MARK[c.mark] ?? 'met'}"`, 'nd-sp-mark') : ''}
+            <div class="nd-sp-crit-text"><label class="nd-access-label"><span>Criterion</span>${wrapped('ctext', c.text, 'what has to happen')}</label>${note ? `<small>${note}</small>` : ''}</div>
+            ${iconButton('fa-solid fa-trash', 'Remove this criterion', 'data-act="spine-remove" data-what="crit"')}
         </div>`;
     };
     const progressBar = (item) => {
@@ -103,7 +112,7 @@ export function mountUi(api) {
         const away = (sp?.turnedAway ?? []).includes(e.id);
         return `<div class="nd-card nd-sp-item nd-sp-ending ${away ? 'nd-sp-away' : ''}" data-kind="ending" data-id="${h(e.id ?? '')}">
             <div class="nd-sp-head"><b>${h(e.title || 'New ending')}</b>${e.id && e.id === lead ? ' <small class="nd-sp-tag nd-on">leading</small>' : ''}${away ? ' <small class="nd-sp-tag nd-warn">turned away</small>' : ''}
-                <i class="fa-solid fa-trash nd-icon nd-sp-right" data-act="spine-remove" data-what="item" title="Remove this ending"></i></div>
+                ${iconButton('fa-solid fa-trash', 'Remove this ending', 'data-act="spine-remove" data-what="item"', 'nd-sp-right')}</div>
             ${progressBar(e)}
             ${field('Title', wrapped('title', e.title, 'a name for this answer'))}
             ${field('How', wrapped('how', e.how, 'how the question gets answered this way'))}
@@ -126,7 +135,7 @@ export function mountUi(api) {
         </div>`
         : `<div class="nd-card nd-sp-item nd-sp-milestone" data-kind="milestone" data-id="${h(m.id ?? '')}">
             <div class="nd-sp-head"><b>${h(m.title || 'New milestone')}</b>${waiting ? ' <small class="nd-sp-tag nd-on">waiting for its conclusion to be written</small>' : ''}
-                <i class="fa-solid fa-trash nd-icon nd-sp-right" data-act="spine-remove" data-what="item" title="Remove this milestone"></i></div>
+                ${iconButton('fa-solid fa-trash', 'Remove this milestone', 'data-act="spine-remove" data-what="item"', 'nd-sp-right')}</div>
             ${progressBar(m)}
             ${m.happened ? `<small>The narration showed it happen${m.happened.quote ? `: “${h(m.happened.quote)}”` : ''}.</small>` : ''}
             ${field('Title', wrapped('title', m.title, 'a stepping stone of the story'))}
@@ -231,7 +240,7 @@ export function mountUi(api) {
 
             <h4>Size limits, in tokens</h4>
             ${num('briefTokens', 'Notes', 'Lines are dropped, least important first, to fit.')}
-            ${num('storyTokens', 'Block before the chat history', 'Premise, sent cast and summaries. Going over is reported on the Now tab.')}`);
+            ${num('storyTokens', 'Block before the chat history', 'The Now tab reports when story context is shortened to fit this estimate.')}`);
     }
 
     $('#extensions_settings2').append(`
@@ -243,7 +252,17 @@ export function mountUi(api) {
     const set = (key, value) => { api.getSettings()[key] = value; api.saveSettings(); };
     $('#nd-settings-body')
         .on('focus mousedown', 'select', function () { if (this.options.length <= 1 && (this.id === 'nd-profile' || this.dataset.ndModule)) renderSettings(); })
-        .on('change', '#nd-enabled', function () { set('enabled', this.checked); api.onToggle(this.checked); })
+        .on('change', '#nd-enabled', async function () {
+            this.disabled = true;
+            try {
+                await api.onToggle(this.checked);
+            } catch (error) {
+                toastr.error(String(error?.message ?? error), 'Narrator Director');
+            } finally {
+                this.checked = api.getSettings().enabled;
+                this.disabled = false;
+            }
+        })
         .on('change', '#nd-profile', function () { set('profile', this.value); })
         .on('change', '[data-nd-module]', function () { api.getSettings().profiles[this.dataset.ndModule] = this.value; api.saveSettings(); })
         .on('change', '#nd-temps', function () { set('setTemps', this.checked); })
@@ -261,15 +280,19 @@ export function mountUi(api) {
 
     // ------------------------------------------------------------ inspector shell
     $('body').append(`
-        <div id="nd-inspector" class="nd-hidden">
-            <div class="nd-head"><b>Director</b><span id="nd-status"></span><span class="nd-spacer"></span><span id="nd-unsaved" class="nd-warn"></span>
-                <i class="fa-solid fa-rotate nd-btn" id="nd-refresh" title="Refresh"></i><i class="fa-solid fa-xmark nd-btn" id="nd-close" title="Close"></i></div>
-            <div class="nd-tabs">${TABS.map(([id, label]) => `<span data-nd-tab="${id}">${label}</span>`).join('')}</div>
-            <div class="nd-body" id="nd-body"></div>
-            <div class="nd-foot"><input id="nd-say" class="text_pole" placeholder="Tell the director something…"><div class="menu_button" id="nd-send">Send</div></div>
-        </div>`);
+        <aside id="nd-inspector" class="nd-hidden" aria-label="Narrator Director">
+            <div class="nd-head"><b>Director</b><span id="nd-status" role="status"></span>
+                <button type="button" class="nd-warn nd-failing-count" id="nd-failure-link" data-nd-tab="log" hidden></button>
+                <span class="nd-spacer"></span><span id="nd-unsaved" class="nd-warn" role="status"></span>
+                ${iconButton('fa-solid fa-rotate', 'Refresh', 'id="nd-refresh"')}
+                ${iconButton('fa-solid fa-xmark', 'Close', 'id="nd-close"')}</div>
+            <nav class="nd-tabs" aria-label="Director views">${TABS.map(([id, label]) => `<button type="button" data-nd-tab="${id}" aria-controls="nd-body">${label}</button>`).join('')}</nav>
+            <div class="nd-body" id="nd-body" tabindex="-1"></div>
+            <div id="nd-feedback" role="status" aria-atomic="true"></div>
+            <div class="nd-foot"><input id="nd-say" class="text_pole" aria-label="Direction to the narrator" placeholder="Tell the director something…"><button type="button" class="menu_button" id="nd-send">Send</button></div>
+        </aside>`);
     const wand = $('#extensionsMenu');
-    if (wand.length) wand.append('<div id="nd-wand" class="list-group-item flex-container flexGap5"><div class="fa-solid fa-clapperboard extensionsMenuExtensionButton"></div>Director</div>');
+    if (wand.length) wand.append('<button type="button" id="nd-wand" class="list-group-item flex-container flexGap5"><span class="fa-solid fa-clapperboard extensionsMenuExtensionButton" aria-hidden="true"></span>Director</button>');
     $(document).on('click', '#nd-wand', () => show(true));
 
     // ------------------------------------------------------------ tabs
@@ -285,13 +308,12 @@ export function mountUi(api) {
             return `
                 <h4>This chat</h4>
                 <div class="nd-field"><span>Director</span><div class="nd-seg">
-                    <span class="menu_button nd-on" data-act="cmd" data-cmd="on">On</span>
-                    <span class="menu_button" data-act="cmd" data-cmd="off">Off</span>
+                    ${button('cmd', 'Off', 'data-cmd="off"')}
                     <small>Off stops the director in this chat only.</small></div></div>
                 <div class="nd-field"><span>Rating</span><div class="nd-seg">
-                    <span class="menu_button ${pg ? '' : 'nd-on'}" data-act="rating" data-value="mature">Mature</span>
-                    <span class="menu_button ${pg ? 'nd-on' : ''}" data-act="rating" data-value="pg">PG</span>
-                    <small>${pg ? 'Adult content is off.' : 'Explicit content on, lethality high.'}</small></div></div>
+                    <button type="button" class="menu_button ${pg ? '' : 'nd-on'}" data-act="rating" data-value="mature" aria-pressed="${!pg}">Mature</button>
+                    <button type="button" class="menu_button ${pg ? 'nd-on' : ''}" data-act="rating" data-value="pg" aria-pressed="${pg}">PG</button>
+                    <small>${pg ? 'Adult content is off.' : s.genre?.explicit ? 'Explicit content is on.' : 'Explicit content is off.'}</small></div></div>
                 <div class="nd-field"><span>Progress</span><div>Turn ${s.meta.turn} · ${s.canon.length} facts on record${total ? ` · ${Math.round(100 * s.meta.rejected / total)}% of proposed changes refused` : ''}${s.meta.lagging ? ' · <span class="nd-warn">the latest reply is not read yet</span>' : ''}</div></div>
                 ${g ? `<div class="nd-field"><span>Group</span><div>${h(GROUP_MODES[g.mode] ?? g.mode)} · ${g.cast} cast · ${g.muted} muted ${button('setup', 'Mute the cast so only the narrator speaks')}</div></div>` : ''}
                 <div class="nd-field"><span>Notes are placed</span><div>${h({ depth: 'before your last message', system: 'in the system prompt', macro: 'where the preset has {{director_notes}}' }[b.placement] ?? b.placement)}</div></div>
@@ -299,7 +321,9 @@ export function mountUi(api) {
 
                 <h4>Notes sent with the last turn</h4>${pre(b.brief.text || 'Nothing has been sent yet.')}
                 <h4>Notes if you sent a message now</h4>${pre(b.preview().text)}
-                <h4>Sent before the chat history${b.story.overflow ? ' <span class="nd-warn">over the token cap</span>' : ''}</h4>${pre(b.story.text || 'Nothing yet.')}`;
+                <h4>Sent before the chat history</h4>
+                ${b.story.overflow ? '<p class="nd-warn">Story context was shortened to fit the token budget.</p>' : ''}
+                ${pre(b.story.text || 'Nothing yet.')}`;
         },
 
         scene(s) {
@@ -332,17 +356,18 @@ export function mountUi(api) {
             const block = ([name, c], i) => `
                 <div class="nd-card" data-form="cast" data-name="${h(name)}">
                     <h4 class="nd-cast-head">${h(name)}${c.pc ? ' <small>your character</small>' : `
-                        <i class="fa-solid fa-pen nd-icon" data-act="rename-cast" title="Rename ${h(name)}"></i>
+                        ${iconButton('fa-solid fa-pen', `Rename ${name}`, 'data-act="rename-cast"')}
                         <small>${c.main ? 'main cast · ' : ''}${bandOf(c.rel)} toward you</small>
-                        <i class="fa-solid ${c.main ? 'fa-user-lock nd-on' : 'fa-user'} nd-icon nd-lock" data-act="lock-cast" data-lock="${c.main ? 'unlock' : 'lock'}"
-                            title="${c.main ? `Main cast: always stays in the cast and central to the plan. Click to unlock.` : 'Lock as main cast: always stays in the cast and central to the plan.'}"></i>`}</h4>
+                        ${iconButton(`fa-solid ${c.main ? 'fa-user-lock' : 'fa-user'}`, c.main ? `Unlock ${name} from main cast` : `Lock ${name} as main cast`,
+                            `data-act="lock-cast" data-lock="${c.main ? 'unlock' : 'lock'}" aria-pressed="${!!c.main}"`, `nd-lock ${c.main ? 'nd-on' : ''}`)}`}</h4>
                     ${c.pc ? '' : `
                     ${field('Stage', select('stage', c.stage, STAGES))}
                     <div class="nd-field"><span>Feelings toward you</span><div class="nd-grid">${AXES.map(a => `<label>${a}${number(`rel.${a}`, c.rel[a], -10, 10)}</label>`).join('')}</div></div>`}
                     <div class="nd-field"><span>Abilities</span><div class="nd-grid">${STATS.map(st => `<label>${st}${number(`stats.${st}`, c.stats?.[st] ?? STAT_BASELINE, 1, 130)}</label>`).join('')}</div></div>
                     ${field('Conditions', text('statuses', statusText(c), 'arm wound (serious), fever (mild)'), `Severity is one of: ${SEVERITY.join(', ')}.`)}
                     ${field('In brief', area('profile', c.profile, 2, 'who they are and how they speak'))}
-                    <div class="nd-field"><span>Gender, race</span><div class="nd-pair">${text('gender', c.gender, 'gender')}${text('race', c.race, 'race; human if unstated')}</div></div>
+                    ${field('Gender', text('gender', c.gender))}
+                    ${field('Race', text('race', c.race, 'human if unstated'))}
                     ${field('Age group', select('age_group', c.age_group ?? '', ['', ...AGE_GROUPS]), 'Empty means unclear. The card\'s rule on minors goes by how someone is described, whatever this says.')}
                     ${field('Appearance', area('appearance', c.appearance, 2, 'build, hair, eyes, marks, usual clothing'), 'Gender, race, age group and appearance are anchors: sent to the narrator while they are in the scene, so they stay the same. The story never changes them. Clear one to take it from the card again.')}
                     ${c.pc ? '' : `
@@ -400,8 +425,8 @@ export function mountUi(api) {
             const servesSelect = (b) => `<select class="text_pole" data-f="serves"><option value="">nothing in particular</option>${serveOptions.map(([id, label]) => `<option value="${h(id)}" ${id === b.serves ? 'selected' : ''}>${h(label)}</option>`).join('')}${b.serves && !serveOptions.some(([id]) => id === b.serves) ? `<option value="${h(b.serves)}" selected>${h(b.serves)} (no longer open)</option>` : ''}</select>`;
             const beatRow = (b) => `
                 <div class="nd-card nd-beat" data-id="${h(b.id ?? '')}">
-                    ${field('Opening', wrapped('pressure', b.pressure || b.goal || b.intent, 'what the world offers now; the player may take it or pass it by'), 'What the narrator sees. True in the world now; never the outcome.')}
-                    ${field('Lands when', wrapped('goal', b.goal || b.intent, 'what counts as this beat happening'), 'Never shown to the narrator. The record keeper judges the beat by it.')}
+                    ${field('Opening', wrapped('pressure', beatText(b).pressure, 'what the world offers now; the player may take it or pass it by'), 'What the narrator sees. True in the world now; never the outcome.')}
+                    ${field('Lands when', wrapped('goal', beatText(b).goal, 'what counts as this beat happening'), 'The record keeper judges the beat by it.')}
                     ${field('Only if', wrapped('precondition', b.precondition, 'the condition that makes it fit'))}
                     <div class="nd-field"><span>Kind</span><div class="nd-inline">${select('type', b.type ?? 'choice', BEAT_TYPES)} ${check('required', b.required, 'Required')} ${button('remove-beat', 'Remove')}</div></div>
                     ${field('In scene', select('scene', b.scene ?? '', sceneIds))}
@@ -451,16 +476,17 @@ export function mountUi(api) {
         },
 
         record(s) {
-            const book = director.lorebook();
+            const book = recordPart === 'lore' ? director.lorebook(s) : null;
             const item = (text, buttons, small = '') => `<div class="nd-line"><div class="nd-line-text">${h(text)}${small ? `<br><small>${small}</small>` : ''}</div><div class="nd-line-buttons">${buttons}</div></div>`;
             const lore = (e) => item(e.text, '', `<b>${h(e.keys.join(', '))}</b> · ${h(e.kind)} · mentioned in ${e.mentions} repl${e.mentions === 1 ? 'y' : 'ies'}${e.supersedes ? ` · replaces authored lore on ${h(e.supersedes)}` : ''}${e.history.length ? `<br>Earlier: ${h(e.history.map(x => x.text).join(' | '))}` : ''}`);
             const inView = new Set(factsInView(s).map(f => f.id));
             const weight = (f) => (f.retired ? '<b>retired by the clean-up</b> · ' : `${f.weight === 'minor' ? 'minor' : 'major'}${f.weight === 'minor' && !inView.has(f.id) ? ', faded: no longer shown to the models' : ''}${f.merged ? ` · merged from ${f.merged.length} facts` : ''} · `);
             const seen = (f) => `${weight(f)}turn ${f.turn ?? '?'} · seen by ${f.witnesses?.length ? h(f.witnesses.join(', ')) : 'nobody else'}${f.secret ? ' · <b class="nd-secret">secret: anyone else in the scene is played as not knowing</b>' : ''}<br>“${h(f.quote || 'no quote')}”`;
             // The icon shows the state (lit = secret); clicking it switches.
-            const secretIcon = (f) => `<i class="fa-solid fa-user-secret nd-icon ${f.secret ? 'nd-on' : ''}" data-act="toggle-secret" data-id="${h(f.id)}"
-                title="${f.secret ? 'Secret. Click to make it an ordinary fact.' : 'Ordinary fact. Click to mark it secret: characters who did not see it are played as not knowing.'}"></i>`;
-            const fact = (f) => item(f.fact, secretIcon(f) + button('retcon', 'Undo', `data-id="${h(f.id)}"`), seen(f));
+            const secretIcon = (f) => iconButton('fa-solid fa-user-secret', f.secret ? 'Make public' : 'Mark secret',
+                `data-act="toggle-secret" data-id="${h(f.id)}" aria-pressed="${!!f.secret}"`, f.secret ? 'nd-on' : '');
+            const source = mid => mid ? button('source', 'Source', `data-mid="${h(mid)}"`) : '';
+            const fact = (f) => item(f.fact, secretIcon(f) + button('retcon', 'Undo', `data-id="${h(f.id)}"`) + source(f.source), seen(f));
             const hint = (f) => item(f.fact, button('confirm-fact', 'It is true', `data-id="${h(f.id)}"`) + button('drop-fact', 'Remove', `data-id="${h(f.id)}"`), f.offscreen ? 'planned off-screen; not narrated yet' : seen(f));
             const who = (n) => `${h(n)}${s.cast[n]?.pc ? ' <small>you</small>' : s.cast[n]?.main ? ' <small><i class="fa-solid fa-user-lock"></i> main cast</small>' : ''}`;
             // World first, then one group per cast member the facts name.
@@ -472,16 +498,23 @@ export function mountUi(api) {
                     <h4>${castTitle} <small>${castCount} · ${castNote}</small></h4>
                     ${g.cast.map(([n, list]) => `<h5>${who(n)} <small>${list.length}</small></h5>${list.map(draw).join('')}`).join('') || empty('Nothing.')}`;
             };
-            const sv = summaryView(s.summaries, 20);
+            const sv = recordPart === 'summaries' ? summaryView(s.summaries, 20) : null;
+            const filter = list => !recordQuery ? list : list.filter(f => [f.fact, f.quote, ...(f.witnesses ?? [])]
+                .some(value => String(value ?? '').toLocaleLowerCase().includes(recordQuery.toLocaleLowerCase())));
+            const search = `<form class="nd-foot" id="nd-record-search">
+                <input class="text_pole" type="search" aria-label="Search this record" value="${h(recordQuery)}" placeholder="Search facts, quotes or witnesses">
+                <button class="menu_button" type="submit">Search</button></form>`;
             const parts = {
                 facts: ['What has happened', s.canon.length, () => `
                     <p class="nd-note"><i class="fa-solid fa-user-secret nd-on"></i> lit: the fact is secret, and characters in the scene who did not see it are played as not knowing. Dim: an ordinary fact. Click the icon to switch. Major facts always count; minor ones fade after a few turns. ${Number(api.getSettings().cleanEvery) > 0 ? `Every ${Number(api.getSettings().cleanEvery)} turns the clean-up merges facts that say the same thing into one (the most current wins) and retires minor ones that no longer matter; retired facts stay listed here.` : 'The fact clean-up is off.'}</p>
-                    ${grouped(s.canon.slice().reverse(), fact, 'World facts', 'places, events and things; newest first', 'Cast knowledge', 'facts about each character, under the first one they name')}
+                    ${search}
+                    ${grouped(filter(s.canon).slice().reverse(), fact, 'World facts', 'newest first', 'Cast knowledge', 'by character')}
                     <h4>Undone <small>the narrator is told these did not happen</small></h4>
                     ${s.tombstones.map((t, i) => item(t.fact, button('forget-retcon', 'Allow again', `data-i="${i}"`))).join('') || empty('Nothing has been undone.')}`],
                 rumours: ['Rumours', s.uncertain.length, () => `
                     <p class="nd-note">Hinted, rumoured or planned off-screen, and not confirmed by the narration yet.</p>
-                    ${grouped(s.uncertain, hint, 'World hearsay', 'about places, events and things', 'Cast rumours', 'about each character, under the first one they name')}`],
+                    ${search}
+                    ${grouped(filter(s.uncertain), hint, 'World hearsay', 'about places, events and things', 'Cast rumours', 'by character')}`],
                 threads: ['Threads', s.threads.filter(t => t.status !== 'resolved').length, () => `
                     <h4>Threads <small>open questions, promises and dangers</small></h4>
                     ${s.threads.map(t => item(t.setup, t.status === 'resolved' ? button('drop-thread', 'Remove', `data-id="${h(t.id)}"`) : button('resolve-thread', 'Resolved', `data-id="${h(t.id)}"`) + button('drop-thread', 'Remove', `data-id="${h(t.id)}"`), `${h(t.status)}${t.payoff ? ` · ${h(t.payoff)}` : ''}`)).join('') || empty('None.')}`],
@@ -498,14 +531,14 @@ export function mountUi(api) {
                         ${pre(sv.older.map(x => x.text).join(' '))}<small>Roll up now folds these into the aggregate summary.</small>` : ''}
                     <h4>Latest turns <small>${sv.latest.length}, newest first</small></h4>
                     ${sv.latest.map(x => item(x.text, '', `message ${x.i + 1}${x.hidden ? ' · hidden' : ''}`)).join('') || empty('None yet.')}`],
-                lore: ['Living lore', book.entries.length, () => `
+                lore: ['Living lore', book?.entries.length ?? '', () => `
                     <h4>Lore the story has added <small>${book.entries.length}</small></h4>
                     ${book.entries.map(lore).join('') || empty('None yet. A person, place or thing must recur before it earns an entry.')}
                     <h4>Waiting to recur <small>${book.waiting.length}</small></h4>
                     ${book.waiting.map(lore).join('') || empty('None.')}`],
             };
             if (!parts[recordPart]) recordPart = 'facts';
-            return `<div class="nd-seg nd-subtabs">${Object.entries(parts).map(([id, [label, n]]) => `<span class="menu_button ${id === recordPart ? 'nd-on' : ''}" data-act="record-part" data-value="${id}">${h(label)} <small>${n}</small></span>`).join('')}</div>
+            return `<div class="nd-seg nd-subtabs">${Object.entries(parts).map(([id, [label, n]]) => `<button type="button" class="menu_button ${id === recordPart ? 'nd-on' : ''}" data-act="record-part" data-value="${id}" aria-pressed="${id === recordPart}">${h(label)} <small>${n}</small></button>`).join('')}</div>
                 ${parts[recordPart][2]()}`;
         },
 
@@ -516,7 +549,7 @@ export function mountUi(api) {
             const c = logModule ? calls[logModule] : null;
             return `
                 <h4>Director errors</h4>
-                ${director.errors.slice().reverse().map(e => `<div class="nd-line nd-warn"><div class="nd-line-text"><b>${h(moduleLabel(e.module))}</b> ${h(e.error)}<br><small>${h(failureHint(e.error))}</small></div></div>`).join('') || empty('None.')}
+                ${director.errors.slice().reverse().map(e => `<div class="nd-line nd-warn"><div class="nd-line-text"><b>${h(moduleLabel(e.module))}</b> ${h(e.error)}<br><small>${h(failureHint(e.error))}</small></div>${e.mid ? button('source', 'Source', `data-mid="${h(e.mid)}"`) : ''}</div>`).join('') || empty('None.')}
                 ${director.errors.length ? `<div class="nd-actions">${button('cmd', 'Retry failed calls', 'data-cmd="retry"')}</div>` : ''}
                 <h4>Corrections sent to the narrator</h4>
                 ${s.flags.slice(-8).reverse().map(f => `<div class="nd-line"><div class="nd-line-text"><b>Turn ${f.turn}</b> ${h(f.correction)}<br><small>“${h(f.quote)}” against: ${h(f.conflicts_with)}</small></div></div>`).join('') || empty('None.')}
@@ -533,14 +566,14 @@ export function mountUi(api) {
                         <p class="nd-note">Rough estimates from text length (about 4 characters per token), not the provider's count. Resets when the chat changes.</p>`;
                 })()}
                 <h4>Last call of each module</h4>
-                ${names.length ? `<div class="nd-seg">${names.map(n => `<span class="menu_button ${n === logModule ? 'nd-on' : ''}" data-act="log-module" data-value="${h(n)}">${h(MODULE_LABELS[n] ?? n)}</span>`).join('')}</div>` : empty('No director calls yet in this session.')}
+                ${names.length ? `<div class="nd-seg">${names.map(n => `<button type="button" class="menu_button ${n === logModule ? 'nd-on' : ''}" data-act="log-module" data-value="${h(n)}" aria-pressed="${n === logModule}">${h(MODULE_LABELS[n] ?? n)}</button>`).join('')}</div>` : empty('No director calls yet in this session.')}
                 ${c ? `<p class="nd-note">${c.ms} ms${c.promptTokens != null ? ` · sent ${c.promptChars} chars (~${c.promptTokens} tokens) · answered ${c.answerChars} chars (~${c.answerTokens} tokens)` : ''}${c.error ? ` · <span class="nd-warn">failed: ${h(c.error)}</span>` : ''}</p>
                     <h4>What it answered</h4>${pre(c.raw || '(nothing)')}
                     <h4>What it was sent</h4>${c.messages.map(m => `<small>${h(m.role)}</small>${pre(m.content)}`).join('')}` : ''}
                 <h4>What cards and lore can read <small>chat variables</small></h4>
                 ${pre(Object.entries(publicVars(s).flags).map(([k, v]) => `${k} = ${v}`).join('\n'))}
-                <h4>Everything the director holds <small>the same as /director dump</small></h4>
-                ${pre(s)}`;
+                <h4>Director state</h4>
+                ${button('show-state', 'Show full state')}`;
         },
     };
 
@@ -566,12 +599,18 @@ export function mountUi(api) {
     // ------------------------------------------------------------ rendering
     function render(force = false) {
         if (!open) return;
+        if (!director.owns()) return;
+        renderedEpoch = director.epoch;
         const ref = api.narratorRef();
-        $('#nd-inspector .nd-tabs span').each(function () { $(this).toggleClass('nd-active', this.dataset.ndTab === tab); });
-        $('#nd-unsaved').text(dirty ? 'unsaved changes' : '');
+        $('#nd-inspector .nd-tabs button').each(function () {
+            const selected = this.dataset.ndTab === tab;
+            $(this).toggleClass('nd-active', selected).attr('aria-current', selected ? 'true' : null);
+        });
+        setStatus('#nd-unsaved', dirty ? 'unsaved changes' : '');
         if (!ref) {
             dirty = false;
-            $('#nd-status').text('not active here');
+            setStatus('#nd-status', 'not active here');
+            $('#nd-failure-link').prop('hidden', true);
             const paused = api.narratorInChat?.() && api.getSettings().enabled;
             $('#nd-body').html(paused
                 ? `<p class="nd-note">The director is off for this chat.</p><div class="nd-actions">${button('cmd', 'Turn the director back on for this chat', 'data-cmd="on"')}</div>`
@@ -579,12 +618,13 @@ export function mountUi(api) {
             return;
         }
         const failing = Object.values(director.failing ?? {});
-        $('#nd-status').html(`${h(director.running ? 'working…' : `narrator: ${ref.name}`)}${failing.length ? ` <span class="nd-warn nd-failing-count" data-nd-tab="log" title="Open the log">· ${failing.length} failing</span>` : ''}`);
+        setStatus('#nd-status', director.running ? 'working…' : `Narrator ${ref.name}`);
+        $('#nd-failure-link').prop('hidden', !failing.length).text(`${failing.length} failing`);
         // Never redraw over something the player is typing or has not saved.
         if (!force && (dirty || $('#nd-body').find('input:focus, textarea:focus, select:focus').length)) return;
         const scroll = $('#nd-body').scrollTop();
         try {
-            $('#nd-body').html(failingBanner() + tabs[tab](director.view()));
+            $('#nd-body').html(failingBanner() + tabs[tab](director.readView()));
         } catch (e) {
             $('#nd-body').html(pre(String(e?.stack ?? e)));
         }
@@ -592,23 +632,46 @@ export function mountUi(api) {
     }
 
     function show(on) {
+        if (on === open) return;
         open = on;
         $('#nd-inspector').toggleClass('nd-hidden', !on);
-        render(true);
+        if (on) {
+            returnFocus = document.activeElement;
+            render();
+            document.querySelector('#nd-inspector .nd-active')?.focus();
+        } else {
+            if (returnFocus?.isConnected && returnFocus.getClientRects().length) returnFocus.focus();
+            else document.querySelector('#extensionsMenuButton')?.focus();
+        }
+    }
+
+    function setStatus(selector, message) {
+        const node = $(selector);
+        if (node.text() !== message) node.text(message);
     }
 
     function done(message) {
         dirty = false;
-        if (message) toastr.success(message, 'Narrator Director');
+        if (message) {
+            setStatus('#nd-feedback', message);
+            toastr.success(message, 'Narrator Director');
+        }
         render(true);
     }
 
     async function say() {
+        const epoch = renderedEpoch;
+        if (!director.owns(epoch)) return;
         const value = String($('#nd-say').val()).trim();
         if (!value) return;
         $('#nd-say').val('');
-        const out = await api.command(value);
-        if (out) toastr.info(String(out).slice(0, 300), 'Narrator Director');
+        let out;
+        try { out = await api.command(value); } catch (error) {
+            if (director.owns(epoch)) setStatus('#nd-feedback', String(error?.message ?? error));
+            return;
+        }
+        if (!director.owns(epoch)) return;
+        if (out) setStatus('#nd-feedback', String(out).slice(0, 300));
         render();
     }
 
@@ -621,11 +684,39 @@ export function mountUi(api) {
         return { ...(prev ?? { treated: false, since: director.view().meta.turn, affects: null }), name, severity };
     });
 
+    async function commandAction(text, epoch) {
+        const out = await api.command(text);
+        if (!director.owns(epoch)) return;
+        if (out) setStatus('#nd-feedback', String(out).slice(0, 300));
+        render();
+    }
+
     const actions = {
-        async cmd(el) { const out = await api.command(el.dataset.cmd); if (out) toastr.info(String(out).slice(0, 300), 'Narrator Director'); done(); },
-        async rating(el) { await api.command(el.dataset.value === 'pg' ? 'pg' : 'pg off'); done(); },
-        async setup() { toastr.info(await api.setupGroup(), 'Narrator Director'); done(); },
+        cmd(el, epoch) { return commandAction(el.dataset.cmd, epoch); },
+        rating(el, epoch) { return commandAction(el.dataset.value === 'pg' ? 'pg' : 'pg off', epoch); },
+        async setup(_el, epoch) {
+            const out = await api.setupGroup();
+            if (!director.owns(epoch)) return;
+            toastr.info(out, 'Narrator Director');
+            done();
+        },
         'log-module'(el) { logModule = el.dataset.value; render(true); },
+        'show-state'(el) {
+            el.insertAdjacentHTML('afterend', pre(director.readView()));
+            el.remove();
+        },
+        async source(el, epoch) {
+            const target = await api.showSource(el.dataset.mid, epoch);
+            if (!director.owns(epoch)) return;
+            if (!target?.getClientRects().length) {
+                setStatus('#nd-feedback', 'The source reply is no longer visible in this chat.');
+                return;
+            }
+            show(false);
+            target.tabIndex = -1;
+            target.focus({ preventScroll: true });
+            target.scrollIntoView({ block: 'center' });
+        },
         'record-part'(el) {
             if (dirty && !confirm('Discard unsaved changes on this part?')) return;
             dirty = false;
@@ -635,66 +726,54 @@ export function mountUi(api) {
         },
 
         'save-scene'(el) {
-            const f = read(formOf(el));
-            const present = [...new Set([...(f.present ?? []), ...fromCommas(f.add)])];
-            api.editState('scene', {
-                location: { value: f.location.trim(), established: !!f.location.trim() },
-                time: { value: f.time.trim(), established: !!f.time.trim() },
-                mood: f.mood.trim(), initiative: f.initiative, present,
-            });
-            done('Scene saved');
+            const form = formOf(el), f = read(form), edited = editedFields(form), fields = [];
+            for (const key of ['location', 'time']) if (edited.has(key)) {
+                const value = f[key].trim();
+                fields.push([`scene.${key}`, { value, established: !!value }]);
+            }
+            for (const key of ['mood', 'initiative']) if (edited.has(key)) fields.push([`scene.${key}`, f[key].trim()]);
+            let presence = false;
+            if (edited.has('present') || edited.has('add')) {
+                const add = fromCommas(f.add), remove = [];
+                for (const input of form.querySelectorAll('[data-f="present"][data-nd-edited]')) {
+                    (input.checked ? add : remove).push(input.value);
+                }
+                if (add.length || remove.length) presence = api.playerOp({ kind: 'scene-presence', add, remove });
+            }
+            if (fields.length) api.editStates(fields);
+            else if (presence) api.editStates([]);
+            done(fields.length || presence ? 'Scene saved' : 'No scene changes to save');
         },
 
         'save-cast'(el) {
-            const form = formOf(el), f = read(form), name = form.dataset.name;
-            const cast = clone(director.view().cast);
-            const c = cast[name];
-            if (!c) return;
-            // Wants are saved with the character, as a player edit: changed, they become the player's; cleared, removed
-            // (and the planner then leaves this character without).
-            let agendas = null;
-            if (!c.pc && 'agenda.wants' in f) {
-                const st = director.view();
-                const cur = cleanWants(st.agendas?.[name]);
-                const next = cleanWants(String(f['agenda.wants'] ?? '').split('\n'));
-                if (next.join('\n') !== cur.join('\n')) {
-                    agendas = clone(st.agendas ?? {});
-                    if (next.length) agendas[name] = { wants: next, since: st.meta.turn, by: 'player' };
-                    else delete agendas[name];
-                }
+            const form = formOf(el), f = read(form), name = form.dataset.name, edited = editedFields(form);
+            const state = director.view(), c = state.cast[name];
+            if (!c) { done(`${name} is no longer in the cast`); return; }
+            if (!edited.size) { done('No cast changes to save'); return; }
+            const fields = [];
+            const wants = edited.has('agenda.wants') ? cleanWants(fromLines(f['agenda.wants'])) : undefined;
+            for (const key of edited) {
+                const value = f[key];
+                if (key === 'agenda.wants') continue;
+                if (key === 'statuses') fields.push([key, parseStatuses(value, c.statuses)]);
+                else if (key === 'beliefs') fields.push([key, fromLines(value).map(b => ({ believes: b, true: false, source: 'player', turn: state.meta.turn }))]);
+                else if (key === 'stances') fields.push([key, Object.fromEntries(fromCommas(value).map(p => p.split(':'))
+                    .filter(p => p.length === 2 && p[0].trim()).map(([n, v]) => [n.trim(), Math.max(-10, Math.min(10, Number(v) || 0))]))]);
+                else if (key.startsWith('rel.')) fields.push([key, Math.max(-10, Math.min(10, value))]);
+                else if (key.startsWith('stats.')) fields.push([key, Math.max(1, Math.min(130, value || STAT_BASELINE))]);
+                else fields.push([key, typeof value === 'string' ? value.trim() : value]);
             }
-            if (!c.pc) {
-                c.stage = f.stage;
-                for (const a of AXES) c.rel[a] = Math.max(-10, Math.min(10, f[`rel.${a}`]));
-                c.dead = !!f.dead;
-            }
-            c.stats = Object.fromEntries(STATS.map(st => [st, Math.max(1, Math.min(130, f[`stats.${st}`] || STAT_BASELINE))]));
-            c.statuses = parseStatuses(f.statuses, c.statuses);
-            c.profile = f.profile.trim();
-            c.appearance = f.appearance.trim();
-            c.gender = f.gender.trim();
-            c.race = f.race.trim();
-            c.age_group = f.age_group;
-            if (!c.pc) {
-                c.temperament = f.temperament;
-                const tells = Object.fromEntries(BANDS.map(b => [b, f[`tells.${b}`].trim()]).filter(([, v]) => v));
-                c.tells = Object.keys(tells).length ? tells : null;
-                c.unprompted = f.unprompted.trim();
-                c.stances = Object.fromEntries(fromCommas(f.stances).map(p => p.split(':')).filter(p => p.length === 2 && p[0].trim())
-                    .map(([n, v]) => [n.trim(), Math.max(-10, Math.min(10, Number(v) || 0))]));
-                const turn = director.view().meta.turn;
-                c.beliefs = [...c.beliefs.filter(x => x.true), ...fromLines(f.beliefs).map(b => c.beliefs.find(x => x.believes === b) ?? { believes: b, true: false, source: 'player', turn })];
-            }
-            if (agendas) api.editStates([['cast', cast], ['agendas', agendas]]);
-            else api.editState('cast', cast);
+            api.playerOp({ kind: 'cast', action: 'edit', name, fields, ...(wants ? { wants } : {}) });
+            api.playerOp({ kind: 'note', text: 'the cast record was corrected; use the current details' });
             done(`${name} saved`);
         },
 
-        async 'rename-cast'(el) {
+        async 'rename-cast'(el, epoch) {
             const name = formOf(el).dataset.name;
             const c = ctx();
             const question = `<h3>Rename ${h(name)}</h3><small>Renaming onto someone already in the cast joins the two; that entry is kept.</small>`;
             const answer = c.callGenericPopup ? await c.callGenericPopup(question, c.POPUP_TYPE.INPUT, name) : prompt(`Rename ${name}`, name);
+            if (!director.owns(epoch)) return;
             const to = typeof answer === 'string' ? answer.trim() : '';
             if (!to || to === name) return;
             api.playerOp({ kind: 'cast', action: 'rename', name, to });
@@ -714,15 +793,17 @@ export function mountUi(api) {
             done(`${name} removed from the cast`);
         },
 
-        async 'save-profile'(el) {
+        async 'save-profile'(el, epoch) {
             const f = read(formOf(el)), g = director.view().genre ?? {};
-            await api.confirmGenre({
+            const saved = await api.confirmGenre({
                 ...g, dominant: f.dominant, secondary: fromCommas(f.secondary), register: f.register, pov: f.pov, tempo: f.tempo,
                 lethality: f.lethality, stakes: f.stakes, priority: fromLines(f.priority), promises: fromLines(f.promises), avoid: fromLines(f.avoid),
                 stats_focus: f.stats_focus ?? [],
                 explicit: g.pg ? false : !!f.explicit,
             });
-            done('Story profile saved');
+            if (!director.owns(epoch)) return;
+            if (saved) done('Story profile saved');
+            else setStatus('#nd-feedback', 'Enter a genre before saving the story profile.');
         },
 
         'save-premise'(el) { api.host.setSetup({ premise: read(formOf(el)).premise.trim() }); done('Premise saved'); },
@@ -780,7 +861,7 @@ export function mountUi(api) {
                 return {
                     ...(prev ?? {}), id, scene: f.scene, lore: fromCommas(f.lore).slice(0, 3), clues, serves: f.serves || '',
                     // intent is the goal's old name, kept as a copy. Either text alone serves as both.
-                    goal: f.goal.trim() || f.pressure.trim(), pressure: f.pressure.trim() || f.goal.trim(), intent: f.goal.trim() || f.pressure.trim(), precondition: f.precondition.trim(), type: f.type, required: !!f.required, status: 'queued',
+                    ...beatText(f), precondition: f.precondition.trim(), type: f.type, required: !!f.required, status: 'queued',
                 };
             }).filter(b => b.goal);
             api.editState('beats', [...s.beats.filter(b => b.status !== 'queued'), ...queued]);
@@ -788,8 +869,8 @@ export function mountUi(api) {
         },
 
         // ---- story spine
-        async 'spine-track'() { const out = await api.command('track'); if (out) toastr.info(String(out).slice(0, 300), 'Narrator Director'); done(); },
-        async 'spine-draft'() { const out = await api.command('spine'); if (out) toastr.info(String(out).slice(0, 300), 'Narrator Director'); done(); },
+        'spine-track'(_el, epoch) { return commandAction('track', epoch); },
+        'spine-draft'(_el, epoch) { return commandAction('spine', epoch); },
         'spine-mark'(el) {
             if (dirty && !confirm('Discard unsaved changes on the spine?')) return;
             api.playerOp({ kind: 'spine-mark', id: el.dataset.id, mark: el.dataset.mark });
@@ -862,17 +943,13 @@ export function mountUi(api) {
             done('Spine saved');
         },
 
-        'toggle-secret'(el) { api.editState('canon', director.view().canon.map(f => (f.id === el.dataset.id ? { ...f, secret: !f.secret } : f))); done(); },
-        'save-rolled'(el) { api.editState('summaries', { ...director.view().summaries, rolled: read(formOf(el)).rolled.trim() }); done('Summary saved'); },
+        'toggle-secret'(el) { api.playerOp({ kind: 'fact-secret', id: el.dataset.id, secret: el.getAttribute('aria-pressed') !== 'true' }); done(); },
+        'save-rolled'(el) { api.editState('summaries.rolled', read(formOf(el)).rolled.trim()); done('Summary saved'); },
         retcon(el) { api.playerOp({ kind: 'retcon', ids: [el.dataset.id] }); done('Undone. The narrator is told it did not happen.'); },
-        'confirm-fact'(el) {
-            const s = director.view(), it = s.uncertain.find(f => f.id === el.dataset.id);
-            if (it) api.editStates([['canon', [...s.canon, it]], ['uncertain', s.uncertain.filter(f => f.id !== it.id)]]);
-            done('Confirmed');
-        },
-        'drop-fact'(el) { api.editState('uncertain', director.view().uncertain.filter(f => f.id !== el.dataset.id)); done('Removed'); },
-        'resolve-thread'(el) { api.editState('threads', director.view().threads.map(t => (t.id === el.dataset.id ? { ...t, status: 'resolved' } : t))); done('Thread resolved'); },
-        'drop-thread'(el) { api.editState('threads', director.view().threads.filter(t => t.id !== el.dataset.id)); done('Thread removed'); },
+        'confirm-fact'(el) { api.playerOp({ kind: 'fact-review', id: el.dataset.id, confirm: true }); done('Confirmed'); },
+        'drop-fact'(el) { api.playerOp({ kind: 'fact-review', id: el.dataset.id }); done('Removed'); },
+        'resolve-thread'(el) { api.playerOp({ kind: 'thread-review', id: el.dataset.id, resolve: true }); done('Thread resolved'); },
+        'drop-thread'(el) { api.playerOp({ kind: 'thread-review', id: el.dataset.id }); done('Thread removed'); },
         'forget-retcon'(el) { api.editState('tombstones', director.view().tombstones.filter((_, i) => i !== Number(el.dataset.i))); done('Allowed again'); },
     };
 
@@ -886,13 +963,54 @@ export function mountUi(api) {
             $('#nd-body').scrollTop(0);
             render(true);
         })
-        .on('input change', '#nd-body [data-f]', () => { dirty = true; $('#nd-unsaved').text('unsaved changes'); })
+        .on('input change', '#nd-body [data-f]', function () {
+            this.dataset.ndEdited = '1';
+            dirty = true;
+            setStatus('#nd-unsaved', 'unsaved changes');
+        })
         .on('keydown', '#nd-body textarea[data-one]', (e) => { if (e.key === 'Enter') e.preventDefault(); })
         .on('click', '#nd-send', say)
+        .on('submit', '#nd-record-search', function (e) {
+            e.preventDefault();
+            recordQuery = this.querySelector('input').value.trim();
+            render(true);
+            document.querySelector('#nd-record-search input')?.focus();
+        })
         .on('keydown', '#nd-say', (e) => { if (e.key === 'Enter') say(); })
+        .on('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); show(false); } })
         .on('click', '[data-act]', async function () {
-            try { await actions[this.dataset.act]?.(this); } catch (e) { console.error('[Narrator Director]', e); toastr.error(String(e?.message ?? e), 'Narrator Director'); }
+            const epoch = renderedEpoch;
+            if (!director.owns(epoch)) return;
+            try { await actions[this.dataset.act]?.(this, epoch); } catch (e) {
+                if (!director.owns(epoch)) return;
+                console.error('[Narrator Director]', e);
+                setStatus('#nd-feedback', String(e?.message ?? e));
+            }
         });
 
-    return { update: () => { badge(); render(); }, open: () => show(true), close: () => show(false), showLog: () => { tab = 'log'; show(true); } };
+    return {
+        update(reason) {
+            if (reason === 'chat') {
+                $('#nd-say').val('');
+                recordQuery = '';
+                setStatus('#nd-feedback', '');
+            }
+            badge();
+            render(reason === 'chat');
+            // Removing a focused input can fire its delegated change handler during the redraw.
+            if (reason === 'chat') {
+                dirty = false;
+                $('#nd-unsaved').text('');
+            }
+        },
+        open: () => show(true),
+        close: () => show(false),
+        showLog: () => {
+            if (dirty && !confirm('Discard unsaved changes?')) return;
+            dirty = false;
+            tab = 'log';
+            if (open) render(true);
+            else show(true);
+        },
+    };
 }

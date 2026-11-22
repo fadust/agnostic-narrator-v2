@@ -7,6 +7,7 @@ import {
 } from './enums.js';
 import { FACT_KINDS } from './enums.js';
 import { agendaLines } from './agenda.js';
+import { beatText } from './beat.js';
 import { standouts, statusPhrase } from './social.js';
 import { READINGS, spineForObserver, spineForPlanner } from './spine.js';
 import { queuedBeatText } from './planner.js';
@@ -102,7 +103,7 @@ export function trackerPrompt({ state, exchanges }) {
     return [{ role: 'system', content: TRACKER_SYSTEM }, { role: 'user', content: user }];
 }
 
-export const TRACK_CHECK_SYSTEM = `You check marks another reader made on an interactive story. Each mark claims that a criterion is now true, and gives a quote from the story as its evidence, with the text around it and who speaks or acts in it.
+export const TRACK_CHECK_SYSTEM = `You check marks another reader made on an interactive story. Each mark claims that a criterion is now true, and gives a quote from the story as its evidence, with the text around it and who speaks or acts in it. When two quotes are supplied for a lasting criterion, both must independently support it.
 
 For each mark answer "confirm" only when the quote itself shows the criterion as true now: the event itself, or the state plainly shown, for the people the criterion names. Otherwise answer "reject" and give the reason in a few words. These are not enough: a hint, a step toward it, a plan or promise, a request not yet accepted, a reaction or gesture that might go with it, a tally of small steps, or someone other than the person the criterion names. Judge only from the text given.
 
@@ -120,6 +121,7 @@ export function trackCheckPrompt({ items }) {
         `Quote: ${it.quote}`,
         `Around it: ${it.context}`,
         `Speaks or acts in the quote: ${it.speaker || 'not known'}`,
+        ...(it.also ? [`Second quote: ${it.also.quote}`, `Around it: ${it.also.context}`, `Speaks or acts in the second quote: ${it.also.speaker || 'not known'}`] : []),
     ].join('\n')).join('\n\n');
     return [{ role: 'system', content: TRACK_CHECK_SYSTEM }, { role: 'user', content: user }];
 }
@@ -154,8 +156,7 @@ export function observerPrompt({ state, reply, playerMessage, offered }) {
     const beat = state.beats.find(b => b.id === offered?.beat);
     const clues = arr(beat?.clues).filter(c => arr(offered?.clues).includes(c.id)).map(c => `${c.id}: ${c.text}`);
     // The pressure exactly as the narrator saw it; the goal (never shown to the narrator) to judge "direction" by.
-    const goal = beat ? (beat.goal || beat.intent || '') : '';
-    const opening = beat ? (beat.pressure || goal) : '';
+    const { goal, pressure: opening } = beatText(beat);
     const notes = beat ? [
         `scene intent: ${opening}${beat.precondition ? ` (only if: ${beat.precondition})` : ''}`,
         ...(goal && goal !== opening ? [`goal (judge "direction" by this; the narrator was not shown it): ${goal}`] : []),
@@ -351,8 +352,8 @@ function planContext(state, loreKeys, memory = null) {
         `${n}${c.main ? ' (main cast)' : ''}: ${bandOf(c.rel)} toward the player, ${c.stage}${c.profile ? `. ${c.profile}` : ''}`);
     const away = npcs.filter(([n, c]) => !inPlay(n, c)).map(([n, c]) => (c.dead ? `${n} (dead)` : n));
     if (away.length) cast.push(`Also in the story, not in play now: ${away.join(', ')}`);
-    const done = state.beats.filter(b => b.status !== 'queued').slice(-6).map(b => `${b.status}: ${b.goal || b.intent} [${b.type}]`);
-    const queued = state.beats.filter(b => b.status === 'queued').map(b => `${b.goal || b.intent} [${b.type}${b.required ? ', required' : ''}]`);
+    const done = state.beats.filter(b => b.status !== 'queued').slice(-6).map(b => `${b.status}: ${beatText(b).goal} [${b.type}]`);
+    const queued = state.beats.filter(b => b.status === 'queued').map(b => `${beatText(b).goal} [${b.type}${b.required ? ', required' : ''}]`);
     // Dormant threads (unseen for a while, not naming anyone here or this place) stay out of the planner's prompt.
     const threads = awakeThreads(state).map(t => t.setup);
     const settled = playerSettled(state).map(s => s.text);

@@ -2,19 +2,21 @@
 // this file only connects SillyTavern's events, prompt slots and World Info to that core.
 // Tested against SillyTavern 1.19.0 (release, 06bde93).
 
-import { extension_prompt_roles, extension_prompt_types } from '../../../../script.js';
-import { editGroup, group_generation_mode } from '../../../group-chats.js';
+import { extension_prompt_roles, extension_prompt_types, showMoreMessages } from '../../../../script.js';
+import { group_generation_mode } from '../../../group-chats.js';
 import { buildBrief, buildStoryBlock } from './core/brief.js';
 import { DEFAULTS, Director } from './core/director.js';
 import { extractJson } from './core/json.js';
 import { DYNAMIC_WORLD, toWorldInfoEntry } from './core/lore.js';
 import { applyRating, validateGenre } from './core/planner.js';
 import { openingPrompt, premisePrompt, revisePrompt } from './core/prompts.js';
-import { castPeople, classify, scan } from './core/state.js';
+import { castPeople, classify } from './core/state.js';
 import { FALLBACK_NOTE, hasLeak, parseTags, stripDirector } from './core/text.js';
 import { clone, similarity, str } from './core/util.js';
 import { clearVars, publicVars, writeVars } from './core/vars.js';
 import { makeCall } from './st/call.js';
+import { parseDirectorCommand } from './st/commands.js';
+import { makeGroupSettings, saveGroupSettings } from './st/group.js';
 import { failureHint, moduleLabel } from './core/failures.js';
 import { memoryGaps, memoryStory, providerOptions, registerMemoryProvider } from './st/providers.js';
 import { mountUi } from './st/ui.js';
@@ -60,6 +62,13 @@ const SETTINGS_DEFAULTS = {
 };
 
 const ctx = () => SillyTavern.getContext();
+// SillyTavern reuses the chat array, and its selection can change before CHAT_CHANGED fires.
+function chatKey() {
+    const c = ctx();
+    const owner = c.groupId ? ['group', c.groupId] : ['character', c.characters?.[c.characterId]?.avatar ?? c.characterId];
+    return JSON.stringify([...owner, c.getCurrentChatId?.(), c.chatMetadata?.integrity]);
+}
+
 let settings = { ...SETTINGS_DEFAULTS };
 const modelCall = makeCall({ getContext: () => ctx(), getSettings: () => settings });
 let genType = 'normal';
@@ -72,6 +81,7 @@ let firstIncluded = 0;
 let loreKeys = [];
 let kickTimer = null;
 let ui = null;
+const CHAT_CHANGED = 'The chat changed before the director could finish.';
 
 // ---------------------------------------------------------------- activation
 
@@ -141,9 +151,11 @@ function castCards() {
 
 const host = {
     chat: () => ctx().chat,
+    chatKey,
     narrator: narratorRef,
     setup: () => ({ ...(meta()?.setup ?? {}), player: ctx().name1 }),
     setSetup(patch) {
+        if (!director.owns()) return;
         const m = meta(true);
         Object.assign(m.setup, patch);
         ctx().saveMetadataDebounced();
@@ -153,7 +165,7 @@ const host = {
         refresh('setup');
     },
     settings: () => settings,
-    save: () => ctx().saveChat(),
+    save: () => { if (director.owns()) return ctx().saveChat(); },
     // A change the player made in the inspector (a milestone concluded, a criterion marked, a cast edit) may leave
     // work due: start the director, as a chat event would, rather than waiting for the next reply.
     changed: (reason) => { refresh(reason); if (reason === 'player') scheduleKick(); },
@@ -214,11 +226,12 @@ const director = new Director(host);
 // ---------------------------------------------------------------- outputs: variables, prompts, UI
 
 function refresh(reason = '') {
+    if (!director.owns()) return;
     const c = ctx();
     const ref = narratorRef();
     if (c.chatMetadata) {
         const vars = (c.chatMetadata.variables ??= {});
-        const changed = ref ? writeVars(vars, publicVars(director.view())) : clearVars(vars);
+        const changed = ref ? writeVars(vars, publicVars(director.readView())) : clearVars(vars);
         if (changed) c.saveMetadataDebounced();
     }
     if (ref) checkPresetRating();
@@ -236,7 +249,7 @@ function checkPresetRating() {
     const main = String((c.chatCompletionSettings?.prompts ?? []).find(p => p.identifier === 'main')?.content ?? '');
     const kind = main.includes('## 7. Adult Content') ? 'Mature' : main.includes('slurs and graphic profanity are not') ? 'PG' : '';
     if (!kind) return;
-    const pg = !!director.view().genre?.pg;
+    const pg = !!director.readView().genre?.pg;
     const want = pg ? 'PG' : 'Mature';
     const key = `${c.getCurrentChatId?.() ?? ''}|${kind}|${want}`;
     if (kind === want || presetWarned === key) return;
@@ -310,6 +323,7 @@ function injectedCast(state) {
  */
 globalThis.narratorDirectorIntercept = async function (_coreChat, _contextSize, _abort, type) {
     try {
+        if (!director.owns()) return clearPrompts();
         genType = type || 'normal';
         const ref = narratorRef();
         if (!ref) return clearPrompts();
@@ -319,9 +333,9 @@ globalThis.narratorDirectorIntercept = async function (_coreChat, _contextSize, 
         director.sync();
         const c = ctx();
         const redo = ['swipe', 'regenerate', 'continue'].includes(genType);
-        const state = director.view({ includeProvisional: !redo });
+        const state = director.readView({ includeProvisional: !redo });
         const last = c.chat.at(-1);
-        const entries = scan(c.chat, ref);
+        const { entries } = director.readings(ref);
         const recentNarration = entries.filter(e => e.kind === 'narration').slice(-4).map(e => e.text);
         // Everyone a card holds shares that card's talkativeness.
         const talkativeness = Object.fromEntries(castCards().flatMap(card => castPeople(state, [card.name]).map(n => [n, card.talkativeness])));
@@ -341,8 +355,10 @@ globalThis.narratorDirectorIntercept = async function (_coreChat, _contextSize, 
 // ---------------------------------------------------------------- events
 
 function scheduleKick(delay = 400) {
+    const epoch = director.epoch;
     clearTimeout(kickTimer);
     kickTimer = setTimeout(() => {
+        if (!director.owns(epoch)) return;
         kickTimer = null;
         // A generation that never reported its end must not hold the director back for good.
         if (generating && Date.now() - generatingSince > 10 * 60_000) generating = false;
@@ -363,15 +379,23 @@ globalThis.narratorDirector = {
     active: () => !!narratorRef(),
     ref: () => narratorRef(),
     firstIncluded: () => firstIncluded,
-    /** Let another extension supply the story so far for the planner: { id, name, available(), story() }. */
+    /** Let an extension supply planner memory and optionally synchronous narrator coverage via gaps(). */
     registerMemoryProvider,
 };
 
 function onChatChanged() {
+    clearTimeout(kickTimer);
+    kickTimer = null;
     director.reset();
     generating = false;
+    generatingSince = 0;
+    genType = 'normal';
     firstIncluded = 0;
+    loreKeys = [];
+    loreEntries = [];
+    loreSample = [];
     lastBrief = { text: '', scan: '', lines: {}, fallback: true };
+    lastStory = { text: '', overflow: false, tokens: 0 };
     clearPrompts();
     if (narratorRef()) {
         director.sync();
@@ -382,12 +406,13 @@ function onChatChanged() {
 }
 
 function onGenerationStarted(type, _opts, dryRun) {
-    if (dryRun) return;
+    if (dryRun || !director.owns()) return;
     genType = type || 'normal';
     if (!SKIP_TYPES.has(genType)) { generating = true; generatingSince = Date.now(); }
 }
 
 function onGenerationDone() {
+    if (!director.owns()) return;
     generating = false;
     if (SKIP_TYPES.has(genType)) {
         genType = 'normal';
@@ -400,6 +425,7 @@ function onGenerationDone() {
 
 /** Leaked director text is removed from the saved reply itself, so it cannot teach the model to leak. */
 function onMessageReceived(id) {
+    if (!director.owns()) return;
     const c = ctx();
     const m = c.chat[id];
     const ref = narratorRef();
@@ -419,6 +445,7 @@ function onMessageReceived(id) {
 const RETCON_OOC = /^\s*[([]?\s*OOC\s*[:：]\s*retcon\s*[:：]?\s*(.+?)[)\]]?\s*$/is;
 
 function onMessageSent(id) {
+    if (!director.owns()) return;
     const c = ctx();
     if (!narratorRef()) return;
     director.sync();
@@ -435,7 +462,7 @@ function onMessageSent(id) {
 }
 
 function onChatMutated() {
-    if (!narratorRef()) return;
+    if (!director.owns() || !narratorRef()) return;
     const r = director.sync();
     if (r.deleted.length || r.stale.length) refresh('mutated');
     scheduleKick();
@@ -449,11 +476,16 @@ let loreEntries = [];
 const arrOf = (v) => (Array.isArray(v) ? v.map(String) : []);
 
 async function onEntriesLoaded(lists) {
+    const epoch = director.epoch;
+    const current = () => director.owns(epoch);
+    if (!current()) return;
     const all = [...lists.globalLore, ...lists.characterLore, ...lists.chatLore, ...lists.personaLore];
     const ref = narratorRef();
     if (!ref) return;
     const c = ctx();
+    if (lists.chatLore.some(entry => entry.world && entry.world !== c.chatMetadata?.world_info)) return;
     const have = new Set(all.map(e => e.world));
+    const added = [];
     if (ref.group) {
         // SillyTavern loads a bound lorebook only for the member that is generating. The cast is muted, so add theirs.
         for (const ch of groupMembers()) {
@@ -461,8 +493,9 @@ async function onEntriesLoaded(lists) {
             if (!world || have.has(world)) continue;
             have.add(world);
             const data = await c.loadWorldInfo(world);
+            if (!current()) return;
             if (!data?.entries) continue;
-            for (const e of Object.values(data.entries)) lists.characterLore.push({ ...e, world });
+            for (const e of Object.values(data.entries)) added.push({ ...e, world });
         }
     }
     const narratorCard = c.characters.find(ch => ch.avatar === ref.avatar);
@@ -476,21 +509,23 @@ async function onEntriesLoaded(lists) {
         // Entries are filed under a book the director owns: lookups by uid go to that file. If a file of the same name
         // exists that the director did not write (an earlier "Import Card Lore"), it may be out of date, so the
         // director uses its own copy beside it instead of touching the player's file.
-        const worldName = await ownedWorldName(baselineName);
-        for (const e of Object.values(converted.entries ?? {})) lists.characterLore.push({ ...e, world: worldName });
+        const worldName = await ownedWorldName(baselineName, current);
+        if (!current()) return;
+        for (const e of Object.values(converted.entries ?? {})) added.push({ ...e, world: worldName });
         // Kept in step with the card: a card update that adds entries must reach the file, or lookups by uid fail
         // ("Valid UID is required" from extensions such as WorldInfoInfo).
-        await mirrorWorld(worldName, converted, true);
+        await mirrorWorld(worldName, converted, current);
+        if (!current()) return;
     }
-    const authored = [...lists.globalLore, ...lists.characterLore, ...lists.chatLore]
+    const authored = [...lists.globalLore, ...lists.characterLore, ...added, ...lists.chatLore]
         .filter(e => e.world !== narratorWorld && e.world !== baselineName && e.world !== `${baselineName} (director)` && e.world !== DYNAMIC_WORLD && !e.disable);
     loreKeys = [...new Set(authored.flatMap(e => e.key ?? []))].slice(0, 200);
     loreEntries = authored.map(e => ({ keys: arrOf(e.key), comment: String(e.comment ?? ''), content: String(e.content ?? '') })).filter(e => e.content.trim());
     loreSample = authored.filter(e => e.constant).concat(authored.filter(e => !e.constant)).slice(0, 12)
         .map(e => `- ${(e.key ?? []).slice(0, 2).join(', ') || e.comment || 'note'}: ${String(e.content ?? '').slice(0, 300)}`);
     const dynamic = director.lorebook().entries.map(toWorldInfoEntry);
-    for (const e of dynamic) lists.characterLore.push(e);
-    await mirrorWorld(DYNAMIC_WORLD, { entries: Object.fromEntries(dynamic.map(({ world, ...e }) => [e.uid, e])) }, true);
+    lists.characterLore.push(...added, ...dynamic);
+    await mirrorWorld(DYNAMIC_WORLD, { entries: Object.fromEntries(dynamic.map(({ world, ...e }) => [e.uid, e])) }, current);
 }
 
 const MIRROR_MARK = 'narrator_director_mirror';
@@ -498,7 +533,7 @@ const mirrored = new Map();
 const ownedNames = new Map();
 
 /** `name` if no file has it or the director wrote that file; otherwise "<name> (director)". */
-async function ownedWorldName(name) {
+async function ownedWorldName(name, current) {
     if (ownedNames.has(name)) return ownedNames.get(name);
     let use = name;
     try {
@@ -507,7 +542,7 @@ async function ownedWorldName(name) {
     } catch (e) {
         console.warn('[Narrator Director] could not check the lorebook file', e);
     }
-    ownedNames.set(name, use);
+    if (current()) ownedNames.set(name, use);
     return use;
 }
 
@@ -516,23 +551,26 @@ async function ownedWorldName(name) {
  * Other extensions look activated entries up by book name and uid (for example /wi-get-timed-effect) and warn
  * when the file is missing. So each book is mirrored to a real lorebook file the director owns.
  * The mirror is never bound or activated; it only answers lookups. A file the director did not create is left alone.
- * @param {boolean} overwrite Rewrite the file when its content changes; otherwise create once.
+ * @param {() => boolean} current Whether the initiating chat still owns this work.
  */
-async function mirrorWorld(name, data, overwrite) {
-    if (settings.mirrorLore === false) return;
+async function mirrorWorld(name, data, current) {
+    if (!current() || settings.mirrorLore === false) return;
     try {
         const c = ctx();
         const exists = c.getWorldInfoNames().includes(name);
         const signature = JSON.stringify(data.entries ?? {});
-        if (exists && (!overwrite || mirrored.get(name) === signature)) return;
+        if (exists && mirrored.get(name) === signature) return;
         if (exists && !mirrored.has(name)) {
-            const current = await c.loadWorldInfo(name);
-            if (!current?.[MIRROR_MARK]) return; // someone else's file with the same name
-            if (JSON.stringify(current.entries ?? {}) === signature) { mirrored.set(name, signature); return; }
+            const saved = await c.loadWorldInfo(name);
+            if (!current() || !saved?.[MIRROR_MARK]) return;
+            if (JSON.stringify(saved.entries ?? {}) === signature) { mirrored.set(name, signature); return; }
         }
+        if (!current()) return;
         await c.saveWorldInfo(name, { entries: structuredClone(data.entries ?? {}), [MIRROR_MARK]: true }, true);
-        mirrored.set(name, signature);
-        if (!exists) await c.updateWorldInfoList();
+        if (current()) {
+            mirrored.set(name, signature);
+            if (!exists) await c.updateWorldInfoList();
+        }
     } catch (e) {
         console.warn('[Narrator Director] could not mirror lore to a file', e);
     }
@@ -540,45 +578,54 @@ async function mirrorWorld(name, data, overwrite) {
 
 // ---------------------------------------------------------------- groups
 
+const groupSettings = makeGroupSettings({
+    getGroup: id => ctx().groups.find(group => group.id === id),
+    saveGroup: group => saveGroupSettings(group, ctx().getRequestHeaders()),
+});
+
 /** Cast up to the limit: SillyTavern joins every card. Above it: swap mode, and the director injects the cast. */
-async function applyGroupRule() {
+async function applyGroupRule(narratorAvatar) {
+    const epoch = director.epoch;
+    if (!director.owns(epoch)) return false;
     const ref = narratorRef();
     const group = currentGroup();
-    if (!ref?.group || !group) return;
-    const m = meta(true);
-    if (m.groupMode === undefined) { m.groupMode = group.generation_mode; ctx().saveMetadataDebounced(); }
-    const cast = group.members.length - 1;
-    const want = cast <= settings.castLimit ? group_generation_mode.APPEND_DISABLED : group_generation_mode.SWAP;
-    if (group.generation_mode !== want) {
-        group.generation_mode = want;
-        await editGroup(group.id, true, false);
-        $('#rm_group_generation_mode').val(want);
-    }
+    if (!ref?.group || !group) return false;
+    const current = () => director.owns(epoch) && currentGroup()?.id === group.id;
+    const applied = await groupSettings.apply(group.id, {
+        modeFor: g => g.members.length - 1 <= settings.castLimit ? group_generation_mode.APPEND_DISABLED : group_generation_mode.SWAP,
+        narratorAvatar,
+        legacyMode: meta()?.groupMode,
+        current,
+    });
+    if (!applied || !current()) return false;
+    $('#rm_group_generation_mode').val(currentGroup().generation_mode);
+    return true;
 }
 
-/** On disable, put the group back in a join mode so the cast still reaches the narrator. */
+/** Restore the group settings the Director changed. The group can have several chats. */
 async function restoreGroupMode() {
+    const epoch = director.epoch;
+    if (!director.owns(epoch)) return false;
     const group = currentGroup();
     const m = meta();
-    if (!group || m?.groupMode === undefined) return;
-    const original = m.groupMode === group_generation_mode.SWAP ? group_generation_mode.APPEND_DISABLED : m.groupMode;
-    delete m.groupMode;
-    if (group.generation_mode !== original) {
-        group.generation_mode = original;
-        await editGroup(group.id, true, false);
-        $('#rm_group_generation_mode').val(original);
-    }
+    if (!group) return true;
+    const current = () => director.owns(epoch) && currentGroup()?.id === group.id;
+    const restored = await groupSettings.restore(group.id, { legacyMode: m?.groupMode, current });
+    if (!restored || !current()) return false;
+    if (m?.groupMode !== undefined) { delete m.groupMode; ctx().saveMetadataDebounced(); }
+    $('#rm_group_generation_mode').val(currentGroup().generation_mode);
+    return true;
 }
 
 /** One click: only the narrator speaks. Mutes the cast and applies the cast-size rule. */
 async function setupGroup() {
+    const epoch = director.epoch;
+    if (!director.owns(epoch)) return CHAT_CHANGED;
     const ref = narratorRef();
     const group = currentGroup();
     if (!ref?.group || !group) return 'Open a group chat that includes the narrator card first.';
-    group.disabled_members = group.members.filter(av => av !== ref.avatar);
-    await editGroup(group.id, true, false);
-    await applyGroupRule();
-    return `Group set up: ${ref.name} narrates, ${group.disabled_members.length} cast member(s) muted.`;
+    if (!await applyGroupRule(ref.avatar) || !director.owns(epoch)) return CHAT_CHANGED;
+    return `Group set up: ${ref.name} narrates, ${currentGroup().disabled_members.length} cast member(s) muted.`;
 }
 
 /** In a group, the narrator opens with her group greeting (CCv3 group_only_greetings), not her solo one. */
@@ -617,7 +664,7 @@ function retcon(raw) {
     let text = String(raw ?? '').trim();
     const force = text.endsWith('!');
     if (force) text = text.slice(0, -1).trim();
-    if (text.replace(/[^\p{L}\p{N}]/gu, '').length < 3) return 'Say what to retcon in at least a few words, for example: /director retcon Mira has the key';
+    if (text.replace(/[^\p{L}\p{N}]/gu, '').length < 3) return 'Say what to retcon in at least a few words, for example: /director retcon: Mira has the key';
     const state = director.view();
     const all = [...state.canon, ...state.uncertain];
     const needle = text.toLowerCase();
@@ -647,37 +694,53 @@ function editState(path, value) {
 }
 
 async function rerunGenre() {
-    await director.exclusive(() => director.ensureGenre(true));
+    const epoch = director.epoch;
+    const saved = await director.exclusive(() => director.ensureGenre(true));
+    if (!director.owns(epoch) || !saved) return false;
     host.save();
     refresh('genre');
+    return true;
 }
 
 async function confirmGenre(value) {
+    if (!director.owns()) return false;
     const v = validateGenre(value);
-    if (!v.ok) return toastr.error(v.error, 'Narrator Director');
+    if (!v.ok) return false;
     v.value.confirmed = true;
     // Before the story starts the profile is a setup value; afterwards a change is logged on the latest message.
     if (ctx().chat.length <= 1) host.setSetup({ genre: v.value });
-    else director.playerOp({ kind: 'genre', value: v.value });
+    else if (!director.playerOp({ kind: 'genre', value: v.value })) return false;
     scheduleKick(50);
+    return true;
 }
 
 /** Draft an opening from a premise the player picks, and offer it as a swipe of the first message. */
 async function draftOpening() {
+    const epoch = director.epoch;
     const c = ctx();
     const ref = narratorRef();
     if (!ref) return 'The director is not active in this chat.';
+    const last = c.chat.at(-1);
+    const lastText = last?.mes;
+    const lastSwipe = last?.swipe_id;
+    const current = () => director.owns(epoch) && ctx().chat.at(-1) === last
+        && last?.mes === lastText && last?.swipe_id === lastSwipe;
+    const stale = () => director.owns(epoch) ? 'The reply changed before the opening was ready.' : CHAT_CHANGED;
     const state = director.view();
     const material = await host.material();
+    if (!current()) return stale();
     const raw = await director.model('opening', premisePrompt({ genre: state.genre, material }));
+    if (!current()) return stale();
     const premises = (extractJson(raw).value?.premises ?? []).map(p => str(p, 400)).filter(Boolean).slice(0, 3);
     if (!premises.length) return 'No premises came back; see the inspector for the raw output.';
     const html = `<h3>Pick a premise</h3>${premises.map((p, i) => `<label class="nd-premise"><input type="radio" name="nd-premise" value="${i}" ${i ? '' : 'checked'}> ${escapeHtml(p)}</label>`).join('')}`;
     let pick = 0;
     const ok = await c.callGenericPopup(html, c.POPUP_TYPE.CONFIRM, '', { onClose: (popup) => { pick = Number(popup.dlg.querySelector('input[name="nd-premise"]:checked')?.value ?? 0); } });
+    if (!current()) return stale();
     if (!ok) return 'Cancelled.';
     const premise = premises[pick];
     const text = stripDirector(await director.model('opening', openingPrompt({ genre: state.genre, premise, material, player: c.name1 })));
+    if (!current()) return stale();
     if (!text) return 'The opening came back empty.';
     host.setSetup({ premise });
     const first = c.chat.findIndex(m => !m.is_user && (m.original_avatar ? m.original_avatar === ref.avatar : m.name === ref.name));
@@ -688,8 +751,8 @@ async function draftOpening() {
         if (Array.isArray(m.swipe_info)) m.swipe_info.push({ send_date: m.send_date, extra: {} });
         m.swipe_id = m.swipes.length - 1;
         m.mes = text;
-        await c.saveChat();
-        await c.reloadCurrentChat();
+        await host.save();
+        if (director.owns(epoch)) await c.reloadCurrentChat();
         return 'Opening drafted as a new swipe of the first message.';
     }
     await c.executeSlashCommandsWithOptions(`/sendas name=${JSON.stringify(ref.name)} ${JSON.stringify(text)}`);
@@ -697,14 +760,21 @@ async function draftOpening() {
 }
 
 async function revise(kind, instruction) {
+    const epoch = director.epoch;
     const state = director.view();
     if (kind === 'genre') {
+        if (!state.genre) return 'The story profile is not ready yet.';
         const raw = await director.model('genre', revisePrompt({ kind: 'story profile', current: state.genre, instruction }));
+        if (!director.owns(epoch)) return CHAT_CHANGED;
         const parsed = extractJson(raw);
-        if (parsed.ok) await confirmGenre(parsed.value);
-        return 'Story profile revised.';
+        const saved = parsed.ok && await confirmGenre({
+            ...parsed.value, pg: state.genre.pg, explicit: state.genre.explicit, lethality: state.genre.lethality,
+        });
+        return saved ? 'Story profile revised.' : 'The revision did not return a valid story profile.';
     }
-    director.playerOp({ kind: 'instruction', text: instruction });
+    if (kind !== 'plan' || !director.playerOp({ kind: 'instruction', text: instruction })) {
+        return 'No revision was saved. Use /director revise genre or /director revise plan in a story.';
+    }
     scheduleKick(50);
     return 'The planner will revise the plan.';
 }
@@ -712,6 +782,8 @@ async function revise(kind, instruction) {
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;' }[ch]));
 
 async function setEnabledForChat(on) {
+    const epoch = director.epoch;
+    if (!director.owns(epoch)) return false;
     const m = meta(true);
     const c = ctx();
     if (on) {
@@ -719,30 +791,41 @@ async function setEnabledForChat(on) {
         delete m.enabled;
         delete m.narrator;
     } else {
-        m.enabled = false;
-        await restoreGroupMode();
+        if (!await restoreGroupMode() || !director.owns(epoch)) return false;
+        meta(true).enabled = false;
     }
+    if (!director.owns(epoch)) return false;
     c.saveMetadataDebounced();
     onChatChanged();
+    return true;
 }
 
 /** /director: free text, or a keyword followed by a colon. */
 async function directorCommand(_named, text) {
-    const input = String(text ?? '').trim();
-    const [, key, rest] = input.match(/^(\w+)\s*:?\s*([\s\S]*)$/) ?? [];
-    const k = (key ?? '').toLowerCase();
+    const epoch = director.epoch;
+    if (!director.owns(epoch)) return CHAT_CHANGED;
+    try {
+        return await runDirectorCommand(text, epoch);
+    } catch (error) {
+        if (!director.owns(epoch)) return CHAT_CHANGED;
+        throw error;
+    }
+}
+
+async function runDirectorCommand(text, epoch) {
+    const { key: k, rest } = parseDirectorCommand(text);
     if (k === 'on') {
         if (!narratorInChat()) return 'The director runs only with the Narrator card. Open a chat with it, or add it to a group with your cards.';
-        await setEnabledForChat(true);
-        return 'Director on for this chat.';
+        return await setEnabledForChat(true) ? 'Director on for this chat.' : CHAT_CHANGED;
     }
-    if (k === 'off') { await setEnabledForChat(false); return 'Director off for this chat.'; }
-    if (k === 'inspect' || !input) { ui?.open(); return ''; }
+    if (k === 'off') return await setEnabledForChat(false) ? 'Director off for this chat.' : CHAT_CHANGED;
+    if (k === 'inspect') { ui?.open(); return ''; }
     if (!narratorRef()) return narratorInChat() ? 'The director is off for this chat. /director on turns it back on.' : 'The director runs only with the Narrator card. Open a chat with it, or add it to a group with your cards.';
     switch (k) {
         case 'scene': {
             const fields = Object.fromEntries([...rest.matchAll(/(location|time|mood)\s*=\s*([^;,\n]+)/gi)].map(m => [m[1].toLowerCase(), m[2].trim()]));
             const present = rest.match(/present\s*=\s*([^;\n]+)/i)?.[1].split(/,|\band\b/).map(s => s.trim()).filter(Boolean);
+            if (!Object.keys(fields).length && !present?.length) return 'Give at least one scene field: location, time, mood or present.';
             for (const f of ['location', 'time']) if (fields[f]) director.playerOp({ kind: 'edit', path: `scene.${f}`, value: { value: fields[f], established: true } });
             if (fields.mood) director.playerOp({ kind: 'edit', path: 'scene.mood', value: fields.mood });
             if (present) director.playerOp({ kind: 'edit', path: 'scene.present', value: present });
@@ -756,58 +839,82 @@ async function directorCommand(_named, text) {
             return `Queued ${beats.length} beat(s).`;
         }
         case 'rewrite': {
+            if (!rest.trim()) return 'Give a direction after /director rewrite:';
             const c = ctx();
             const last = c.chat.at(-1);
             if (!last || classify(last, narratorRef()) !== 'narration') return 'The latest message is not a narrator reply.';
             director.playerOp({ kind: 'instruction', text: `rewrite the last reply: ${rest}` });
             const count = last.swipes?.length ?? 1;
             if ((last.swipe_id ?? 0) < count - 1) await c.swipe.to(null, 'right', { forceSwipeId: count - 1 });
+            if (!director.owns(epoch) || ctx().chat.at(-1) !== last) return 'The target reply changed before the rewrite.';
             await c.swipe.right(); // past the last swipe: SillyTavern generates a new one
             return '';
         }
         case 'pg': {
+            if (rest && !/^(on|off|no|yes|true|false|0|1)$/i.test(rest)) return 'Use /director pg on or /director pg off.';
             // The rating switch. PG turns all adult content off; "pg off" returns the story to the mature default.
             const off = /^(off|no|false|0)$/i.test(rest.trim());
             const genre = director.view().genre;
             if (!genre) return 'The story profile is not ready yet.';
-            await confirmGenre(applyRating(genre, off ? 'mature' : 'pg'));
+            if (!await confirmGenre(applyRating(genre, off ? 'mature' : 'pg'))) return 'The rating could not be saved.';
             return off ? 'Mature rating: explicit content on, lethality high. Select the "Narrator Companion (Mature)" preset.' : 'PG rating: adult content is off for this story. Select the "Narrator Companion (PG)" preset.';
         }
         case 'explicit': {
+            if (rest && !/^(on|off|no|yes|true|false|0|1)$/i.test(rest)) return 'Use /director explicit on or /director explicit off.';
             const on = !/^(off|no|false|0)$/i.test(rest.trim());
             const genre = director.view().genre;
             if (!genre) return 'The story profile is not ready yet.';
             if (on && genre.pg) return 'This story is rated PG. Use /director pg off first.';
-            await confirmGenre({ ...genre, explicit: on });
+            if (!await confirmGenre({ ...genre, explicit: on })) return 'The explicit-content setting could not be saved.';
             return on ? 'Explicit content is on for this story.' : 'Explicit content is off for this story.';
         }
         case 'retcon': return retcon(rest);
-        case 'profile': await rerunGenre(); return 'Story profile re-run.';
-        case 'confirm': await confirmGenre(director.view().genre); return 'Story profile confirmed.';
-        case 'replan': director.playerOp({ kind: 'instruction', text: rest || 're-plan from where the story stands', ...(rest ? {} : { quiet: true }) }); scheduleKick(50); return 'Re-planning.';
-        case 'rollup': await director.exclusive(() => director.maybeRollUp(true)); host.save(); refresh('rollup'); return 'Summaries rolled up.';
+        case 'profile': return await rerunGenre() ? 'Story profile saved.' : 'No story profile was saved. Add a premise and check the Log tab.';
+        case 'confirm': return await confirmGenre(director.view().genre) ? 'Story profile confirmed.' : 'A valid story profile is needed first.';
+        case 'replan':
+            if (!director.playerOp({ kind: 'instruction', text: rest || 're-plan from where the story stands', ...(rest ? {} : { quiet: true }) })) return 'Start a story before re-planning.';
+            scheduleKick(50);
+            return 'Re-plan requested.';
+        case 'rollup': {
+            const saved = await director.exclusive(() => director.maybeRollUp(true));
+            if (!director.owns(epoch)) return CHAT_CHANGED;
+            if (!saved) return 'No roll-up was saved. Roll-up requires Director memory and a summary outside the prompt.';
+            host.save();
+            refresh('rollup');
+            return 'Summaries rolled up.';
+        }
         case 'track': {
             if (!director.view().spine) return 'There is no spine yet. Use /director spine first.';
-            await director.trackNow();
+            const { status } = await director.trackNow();
+            if (!director.owns(epoch)) return CHAT_CHANGED;
             refresh('tracked');
-            return 'Spine checked against the latest replies.';
+            return {
+                current: 'No replies are waiting for a spine check.',
+                checked: 'Spine checked against the latest replies.',
+                partial: 'Some spine checks were saved. Replies are still waiting.',
+                pending: 'No spine check was saved. See the Log tab.',
+                superseded: CHAT_CHANGED,
+            }[status];
         }
         case 'spine': {
             const had = !!director.view().spine;
             if (!director.view().arc) return 'The spine is drafted after the arc. Accept the story profile or start playing first.';
             const ok = await director.exclusive(() => director.ensureSpine(true));
+            if (!director.owns(epoch)) return CHAT_CHANGED;
             host.save(); refresh('spine');
             return ok ? (had ? 'Spine redrafted from the setup.' : 'Spine drafted.') : 'No spine came back; see the Log tab.';
         }
         case 'redraft': {
             if (!director.view().genre) return 'The story profile is not ready yet.';
-            const ok = await director.exclusive(() => director.redraftArc());
+            const saved = await director.exclusive(() => director.redraftArc());
+            if (!director.owns(epoch)) return CHAT_CHANGED;
             host.save(); refresh('spine');
-            return ok ? 'Arc, spine and plan redrafted from where the story stands.' : 'No arc came back; see the Log tab.';
+            if (!saved) return 'No new arc was saved. See the Log tab.';
+            return saved.length === 3 ? 'Arc, spine and plan redrafted.' : `Redrafted ${saved.join(' and ')}. See the Log tab for the other parts.`;
         }
         case 'settle': {
             if (!rest.trim()) return 'Usage: /director settle <what is closed, e.g. Max wants nothing in return>';
-            director.playerOp({ kind: 'settle', text: rest.trim() });
+            if (!director.playerOp({ kind: 'settle', text: rest.trim() })) return 'Start a story before settling a matter.';
             scheduleKick(50);
             return 'Settled: the story will not press it again.';
         }
@@ -829,7 +936,7 @@ async function directorCommand(_named, text) {
         }
         default:
             // Free text: an instruction to the director. It reaches the planner and, once, the narrator's notes.
-            director.playerOp({ kind: 'instruction', text: input });
+            if (!director.playerOp({ kind: 'instruction', text: rest })) return 'Start a story before sending a direction.';
             scheduleKick(50);
             return 'Noted.';
     }
@@ -837,6 +944,7 @@ async function directorCommand(_named, text) {
 
 /** Suggest mode: the player picks which queued beat comes next. Opt-in by command, because it shows the plan. */
 async function suggestBeat() {
+    const epoch = director.epoch;
     const c = ctx();
     const state = director.view();
     const queued = state.beats.filter(b => b.status === 'queued');
@@ -844,13 +952,28 @@ async function suggestBeat() {
     const html = `<h3>What should come next?</h3><small>This shows where the story may be heading.</small>${queued.slice(0, 6).map((b, i) => `<label class="nd-premise"><input type="radio" name="nd-beat" value="${i}" ${i ? '' : 'checked'}> ${escapeHtml(b.intent)} <i>(${b.type})</i></label>`).join('')}`;
     let pick = 0;
     const ok = await c.callGenericPopup(html, c.POPUP_TYPE.CONFIRM, '', { onClose: (popup) => { pick = Number(popup.dlg.querySelector('input[name="nd-beat"]:checked')?.value ?? 0); } });
+    if (!director.owns(epoch)) return CHAT_CHANGED;
     if (!ok || pick === 0) return '';
     const chosen = queued[pick];
-    const beats = clone(state.beats);
-    const from = beats.findIndex(b => b.id === chosen.id), to = beats.findIndex(b => b.status === 'queued');
+    const beats = clone(director.view().beats);
+    const from = beats.findIndex(b => b.id === chosen?.id && b.status === 'queued'), to = beats.findIndex(b => b.status === 'queued');
+    if (from < 0) return 'The queued opening has changed.';
     beats.splice(to, 0, ...beats.splice(from, 1));
     director.playerOp({ kind: 'edit', path: 'beats', value: beats });
     return 'Next beat chosen.';
+}
+
+async function showSource(mid, epoch) {
+    const message = ctx().chat.find(m => m.narrator_id === mid);
+    if (!message || !director.owns(epoch)) return null;
+    const index = ctx().chat.indexOf(message);
+    const element = () => document.querySelector(`#chat .mes[mesid="${index}"]`);
+    if (!element()) {
+        const before = Number(document.querySelector('#chat .mes')?.getAttribute('mesid'));
+        if (Number.isFinite(before) && before > index) await showMoreMessages(before - index);
+    }
+    if (!director.owns(epoch) || ctx().chat[index] !== message) return null;
+    return element();
 }
 
 // ---------------------------------------------------------------- init
@@ -922,7 +1045,8 @@ function registerCommand() {
     registerCommand();
     const E = c.eventTypes, on = (ev, fn) => ev && c.eventSource.on(ev, fn);
     on(E.CHAT_CHANGED, onChatChanged);
-    on(E.GENERATION_STARTED, onGenerationStarted);
+    // A slash command in the composer can end the send before any generation takes place.
+    on(E.GENERATION_AFTER_COMMANDS ?? E.GENERATION_STARTED, onGenerationStarted);
     on(E.GENERATION_ENDED, onGenerationDone);
     on(E.GENERATION_STOPPED, onGenerationDone);
     on(E.MESSAGE_RECEIVED, onMessageReceived);
@@ -936,10 +1060,18 @@ function registerCommand() {
     ui = mountUi({
         director, host, getSettings: () => settings, defaults: SETTINGS_DEFAULTS, narratorRef, narratorInChat, escapeHtml, providerOptions,
         saveSettings: () => { c.saveSettingsDebounced(); refresh('settings'); },
-        onToggle: async (enabled) => { if (!enabled) await restoreGroupMode(); onChatChanged(); },
-        getBrief: () => ({ brief: lastBrief, story: lastStory, placement: placement(), preview: () => buildBrief(director.view(), { tokenCap: settings.briefTokens }) }),
+        onToggle: async (enabled) => {
+            const epoch = director.epoch;
+            if (!enabled && !await restoreGroupMode()) return false;
+            if (!director.owns(epoch)) return false;
+            settings.enabled = enabled;
+            c.saveSettingsDebounced();
+            onChatChanged();
+            return true;
+        },
+        getBrief: () => ({ brief: lastBrief, story: lastStory, placement: placement(), preview: () => buildBrief(director.readView(), { tokenCap: settings.briefTokens }) }),
         editState, editStates, confirmGenre, rerunGenre, retcon, setupGroup,
-        playerOp: (op) => director.playerOp(op),
+        playerOp: (op) => director.playerOp(op), showSource,
         command: (text) => directorCommand({}, text),
         groupInfo: () => { const g = currentGroup(); return g ? { mode: g.generation_mode, cast: g.members.length - 1, muted: g.disabled_members?.length ?? 0 } : null; },
         fallbackNote: FALLBACK_NOTE, dynamicWorld: DYNAMIC_WORLD,

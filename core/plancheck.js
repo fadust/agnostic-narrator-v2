@@ -10,10 +10,6 @@ import { arr, clip, isObj, nameKey, str } from './util.js';
 export const REWRITE_CODES = ['script', 'criterion', 'name', 'genre'];
 export const DROP_CODES = ['script', 'genre'];
 
-/** What a beat's goal is, and what the narrator sees, for beats stored before goal and pressure existed. */
-export const goalOf = (b) => str(b?.goal) || str(b?.intent);
-export const pressureOf = (b) => str(b?.pressure) || goalOf(b);
-
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // ------------------------------------------------------------ (a) scripts the player

@@ -6,8 +6,20 @@ import http from 'node:http';
 
 export function startMock(port = 8124) {
     const log = [];
-    const control = { leak: false, contradict: false, narration: null, delayMs: 0, observerBeat: 'untouched', failObserver: false };
+    const control = { leak: false, contradict: false, narration: null, delayMs: 0, observerBeat: 'untouched', failObserver: false, failSpine: false, revisedGenre: null, arcGoal: null };
+    const paused = new Map();
     let turn = 0;
+
+    function pauseNext(kind) {
+        if (paused.has(kind)) throw new Error(`Already holding the next ${kind} response`);
+        let release;
+        const gate = new Promise(resolve => { release = resolve; });
+        paused.set(kind, gate);
+        return () => {
+            if (paused.get(kind) === gate) paused.delete(kind);
+            release();
+        };
+    }
 
     const flat = (messages) => messages.map(m => (typeof m.content === 'string' ? m.content : (m.content ?? []).map(p => p.text ?? '').join(''))).join('\n');
 
@@ -40,6 +52,7 @@ export function startMock(port = 8124) {
         }
         // Modules added after 0.1.0: spine, its check, the tracker and its check, plan check, fact clean-up, conclusions.
         if (sys.includes('You draft the spine of an interactive story')) {
+            if (control.failSpine) return { kind: 'spine', text: '{}' };
             return { kind: 'spine', text: JSON.stringify({
                 question: 'Will the village learn who poisoned the well before it scatters?',
                 endings: [
@@ -55,6 +68,9 @@ export function startMock(port = 8124) {
         if (sys.includes('You check beats a planner drafted')) return { kind: 'plan-check', text: JSON.stringify({ rewrites: [] }) };
         if (sys.includes('You tidy the list of established facts')) return { kind: 'cleanup', text: JSON.stringify({ merges: [], retire: [] }) };
         if (sys.includes('You write the conclusion of one milestone')) return { kind: 'conclusion', text: JSON.stringify({ conclusion: 'The water was tested and found bitter.' }) };
+        if (sys.includes('Revise the story profile below')) {
+            return { kind: 'genre-revision', text: control.revisedGenre ? JSON.stringify(control.revisedGenre) : '{}' };
+        }
         if (sys.includes('describe what kind of story it wants to be')) {
             return { kind: 'genre', text: JSON.stringify({ dominant: 'Fantasy', secondary: ['adventure'], register: 'plain, concrete, a little wry', pov: 'second person, present tense', priority: ['player agency', 'character consistency'], stakes: 'the village and its people', lethality: 'real', tempo: 'measured', promises: ['wonder with a cost'], avoid: ['modern slang'], stats_focus: ['agility', 'will'] }) };
         }
@@ -63,7 +79,7 @@ export function startMock(port = 8124) {
             return { kind: 'profile', text: JSON.stringify({ summary: `${name} in brief.`, stats: { strength: 35, agility: name === 'Mira' ? 66 : 40, endurance: 30, intellect: 45, perception: 50, will: 40, presence: 38 }, temperament: 'proud', tells: { warm: 'teases instead of praising' }, unprompted: 'checks the exits' }) };
         }
         if (sys.includes('outline the arc')) {
-            return { kind: 'arc', text: JSON.stringify({ goal: 'Find out who poisoned the well', forces: ['the miller', 'the drought'], acts: 3, payoff: { name: 'the well runs clear', act: 3, hooks: ['a bitter taste', 'a missing ledger'] }, endings: [{ title: 'The truth out', outcomes: { Mira: 'stays' } }, { title: 'The village scatters', outcomes: { Mira: 'leaves' } }] }) };
+            return { kind: 'arc', text: JSON.stringify({ goal: control.arcGoal ?? 'Find out who poisoned the well', forces: ['the miller', 'the drought'], acts: 3, payoff: { name: 'the well runs clear', act: 3, hooks: ['a bitter taste', 'a missing ledger'] }, endings: [{ title: 'The truth out', outcomes: { Mira: 'stays' } }, { title: 'The village scatters', outcomes: { Mira: 'leaves' } }] }) };
         }
         if (sys.includes('You are the planner')) {
             return { kind: 'plan', text: JSON.stringify({ scenes: [{ id: 's1', purpose: 'unease at the well', if_unchallenged: ['the miller buys up the last clean water'], choice_points: ['confront or watch'], focus: { Mira: 'guarded hope' } }], beats: [{ scene: 's1', intent: 'let the bitter taste of the well water be noticed', precondition: 'someone drinks or draws water', type: 'reveal', required: true, lore: ['Greywell'], clues: [{ text: 'a grey film on the bucket', route: 'place', where: 'the well' }] }, { scene: 's1', intent: 'SECRET_SECOND_BEAT the miller makes an offer', precondition: 'the player lingers', type: 'pressure' }], tension: 'rising' }) };
@@ -94,6 +110,11 @@ export function startMock(port = 8124) {
             const data = JSON.parse(body);
             const out = respond(data.messages ?? []);
             log.push({ kind: out.kind, messages: data.messages, at: Date.now(), response: out.text, temperature: data.temperature });
+            const gate = paused.get(out.kind);
+            if (gate) {
+                paused.delete(out.kind);
+                await gate;
+            }
             if (control.delayMs && out.kind !== 'narrator') await new Promise(r => setTimeout(r, control.delayMs));
             // Director calls through a Connection Manager profile are streamed (since 21 Nov 2026): answer as server-sent events.
             if (data.stream) {
@@ -109,7 +130,10 @@ export function startMock(port = 8124) {
         }
         send(404, { error: 'not found' });
     });
-    return new Promise(resolve => server.listen(port, '127.0.0.1', () => resolve({ server, log, control, port })));
+    return new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(port, '127.0.0.1', () => resolve({ server, log, control, pauseNext, port: server.address().port }));
+    });
 }
 
 if (import.meta.url === (await import('node:url')).pathToFileURL(process.argv[1]).href) startMock(Number(process.argv[2]) || 8124).then(m => console.log(`mock LLM on ${m.port}`));

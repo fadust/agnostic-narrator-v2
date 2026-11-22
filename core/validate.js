@@ -466,14 +466,20 @@ export function validateTracking(raw, ctx) {
             if (!exchange) { reject('spine', 'mark: quote not in the reply', m); continue; }
             // A lasting state needs two different exchanges. A valid second one completes it; otherwise it is partly shown.
             let partial = false;
+            let also;
             if (m.mark === 'met' && arr(sp.lastingIds).includes(m.id)) {
                 const second = isObj(m.also) ? placeQuote(m.also.quote, m.also.exchange) : 0;
                 partial = !(second && second !== exchange);
+                if (!partial) {
+                    const speaker = speakerOf(m.also.by ?? m.by, texts[second - 1], m.also.quote);
+                    also = { exchange: second, quote: str(m.also.quote), ...(speaker ? { speaker } : {}) };
+                }
             }
             seenMark.add(m.id);
             delta.marks.push({
                 id: m.id, mark: m.mark, quote: str(m.quote), exchange, ...(evidence ? { evidence } : {}),
-                ...((who) => (who ? { speaker: who } : {}))(speakerOf(m.by, texts[exchange - 1], m.quote)), ...(partial ? { partial: true } : {}), ...(m.mark === 'failed' ? { reason } : {}),
+                ...((who) => (who ? { speaker: who } : {}))(speakerOf(m.by, texts[exchange - 1], m.quote)),
+                ...(partial ? { partial: true } : {}), ...(also ? { also } : {}), ...(m.mark === 'failed' ? { reason } : {}),
             });
             accepted++;
         }
@@ -486,7 +492,10 @@ export function validateTracking(raw, ctx) {
             const exchange = placeQuote(h.quote, h.exchange);
             if (!exchange) { reject('spine', 'happened: quote not in the reply', h); continue; }
             const who = speakerOf(h.by, texts[exchange - 1], h.quote);
-            delta.happened.push({ milestone: h.milestone, quote: str(h.quote), exchange, ...(who ? { speaker: who } : {}) });
+            const supporting = delta.marks.filter(m => m.mark === 'met' && own.includes(m.id));
+            const at = Math.max(exchange, ...supporting.map(m => Math.max(m.exchange, m.also?.exchange ?? 0)));
+            delta.happened.push({ milestone: h.milestone, quote: str(h.quote), exchange, ...(at !== exchange ? { at } : {}),
+                support: supporting.map(m => m.id), ...(who ? { speaker: who } : {}) });
             accepted++;
         }
     }
@@ -542,10 +551,12 @@ export function applyTrackCheck(v, verdicts, milestoneCriteria = {}) {
     const happened = [];
     for (const h of v.delta.happened) {
         const own = arr(milestoneCriteria[h.milestone]);
-        if (own.length && !marks.some(m => m.mark === 'met' && own.includes(m.id))) {
+        const supporting = marks.filter(m => m.mark === 'met' && own.includes(m.id));
+        if (own.length && !supporting.length) {
             rejected.push({ kind: 'spine', reason: 'check: none of its criteria still met', item: h });
             accepted--;
-        } else happened.push(h);
+        } else happened.push({ ...h, support: supporting.map(m => m.id),
+            at: Math.max(h.exchange, ...supporting.map(m => Math.max(m.exchange, m.also?.exchange ?? 0))) });
     }
     return { delta: { ...v.delta, marks, happened }, rejected, accepted };
 }

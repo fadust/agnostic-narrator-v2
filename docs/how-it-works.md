@@ -20,16 +20,16 @@ That one decision handles everything SillyTavern lets you do to a chat:
 
 | You do | What follows |
 | --- | --- |
-| Swipe | The new text no longer matches the record's hash, so the record is dropped and the reply is read again |
-| Swipe back | The old record is restored with the old text and reused without a new call |
-| Edit a reply | Same as a swipe: the hash no longer matches |
-| Delete messages | Their records are gone, so their facts, summaries and lore are gone |
+| Swipe | Director removes the old reading and dependent records, then reads the active reply |
+| Swipe back | Director reads the newly active reply again |
+| Edit a reply | Director discards records that depended on the previous text and reads the edited reply |
+| Delete messages | Director removes facts, plans, summaries and lore that depended on the deleted text |
 | Branch or checkpoint | The branch carries its own messages and so rebuilds its own state |
 
 Two kinds of data sit on a message:
 
-- **Bound to one swipe**, in `extra.narrator`: the observer's reading, and director operations that rest on that reply, such as a plan.
-- **Bound to the message**, at its top level: a stable id, and operations by the player or by setup, such as an edit, a retcon or a character profile. Swiping cannot touch these.
+- **Bound to the active reply**, in `extra.narrator`: the observer's reading and director operations that rest on the current story, such as a plan. SillyTavern still keeps its swipe text.
+- **Bound to the message**, at its top level: a stable id, active revision and operations by the player or by setup. Swiping preserves independent player edits and retcons.
 
 ## Nothing counts until accepted
 

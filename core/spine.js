@@ -217,8 +217,12 @@ export function applySpineDelta(state, sd, entry, key, tracked = true) {
     for (const h of arr(sd.happened)) {
         const ms = arr(sp.milestones).find(x => x.id === h.milestone && x.status !== 'concluded');
         // A skipped milestone that happens after all is reopened, and concludes like any other (owner, 22 Nov 2026).
-        if (ms?.status === 'skipped') ms.status = 'open';
-        if (ms && !ms.happened) { ms.happened = { quote: str(h.quote), source: entry.mid, ...(h.speaker ? { speaker: str(h.speaker, 60) } : {}) }; built = true; }
+        if (!ms || ms.happened) continue;
+        if (h.support?.length && !arr(ms.criteria).some(c => c.mark === 'met' && h.support.includes(c.id))) continue;
+        if (!h.support && h.exchange && ms.criteria?.some(c => c.partial) && !ms.criteria.some(c => c.mark === 'met')) continue;
+        if (ms.status === 'skipped') ms.status = 'open';
+        ms.happened = { quote: str(h.quote), source: entry.mid, ...(h.speaker ? { speaker: str(h.speaker, 60) } : {}) };
+        built = true;
     }
     const byEnding = {};
     for (const r of arr(sd.readings)) {
@@ -242,7 +246,19 @@ export function applySpineDelta(state, sd, entry, key, tracked = true) {
 export function trackPart(delta, k, count) {
     if (!isObj(delta)) return undefined;
     const mine = (it) => (Number(it.exchange) || count) === k;
-    return { readings: arr(delta.readings).filter(mine), marks: arr(delta.marks).filter(mine), happened: arr(delta.happened).filter(mine) };
+    const marks = [];
+    for (const mark of arr(delta.marks)) {
+        if (!mark.also) {
+            if (mine(mark)) marks.push(mark);
+            continue;
+        }
+        const { also, ...first } = mark;
+        const second = { ...first, ...also, speaker: also.speaker };
+        const [early, late] = first.exchange < second.exchange ? [first, second] : [second, first];
+        if (early.exchange === k) marks.push({ ...early, partial: true });
+        if (late.exchange === k) marks.push(late);
+    }
+    return { readings: arr(delta.readings).filter(mine), marks, happened: arr(delta.happened).filter(h => (h.at || h.exchange || count) === k) };
 }
 
 /** The planner's additions in a plan: alternative criteria for endings that lost one, and a proposed new ending. */

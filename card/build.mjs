@@ -114,7 +114,7 @@ const card = {
         group_only_greetings: [GROUP_OPENING],
         tags: ['narrator', 'storyteller', 'game master'],
         creator: 'fadust',
-        character_version: '0.2.2',
+        character_version: '0.3.0-rc.1',
         extensions: {
             talkativeness: '1',
             fav: false,
@@ -147,7 +147,8 @@ function forRating(text, pg) {
     const out = text
         .replace(/\{\{if \.nar_pg\}\}([\s\S]*?)\{\{else\}\}([\s\S]*?)\{\{\/if\}\}/g, (_, a, b) => (pg ? a : b))
         .replace(/\{\{if !\.nar_pg\}\}([\s\S]*?)\{\{\/if\}\}/g, (_, a) => (pg ? '' : a))
-        .replace(/\{\{if \.nar_pg\}\}([\s\S]*?)\{\{\/if\}\}/g, (_, a) => (pg ? a : ''));
+        .replace(/\{\{if \.nar_pg\}\}([\s\S]*?)\{\{\/if\}\}/g, (_, a) => (pg ? a : ''))
+        .replace(/\{\{if \.nar_explicit\}\}[\s\S]*?\{\{\/if\}\}/g, block => (pg ? '' : block));
     if (/nar_pg/.test(out)) throw new Error('preset.md: an unresolved PG gate is left');
     // PG has no section 7 (Adult Content): the sections after it move up one, and so do references to them.
     return pg ? out.replace(/^## (\d+)\./gm, (m, n) => (Number(n) > 7 ? `## ${n - 1}.` : m)).replace(/\bsection 8\b/g, 'section 7') : out;

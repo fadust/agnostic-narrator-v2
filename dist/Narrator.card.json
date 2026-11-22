@@ -21,7 +21,7 @@
       "game master"
     ],
     "creator": "fadust",
-    "character_version": "0.2.2",
+    "character_version": "0.3.0-rc.1",
     "extensions": {
       "talkativeness": "1",
       "fav": false,

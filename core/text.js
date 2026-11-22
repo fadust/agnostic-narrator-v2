@@ -29,7 +29,8 @@ export function stripTags(text, tags) {
     let out = String(text ?? '');
     const names = (tags ?? []).map(t => String(t).trim()).filter(t => /^[\w:.-]+$/.test(t));
     if (!names.length) return out;
-    for (const t of names) {
+    for (const name of names) {
+        const t = name.replace(/\./g, '\\.');
         out = out.replace(new RegExp(`<${t}(?:\\s[^>]*)?>[\\s\\S]*?</${t}\\s*>`, 'gi'), '');
         out = out.replace(new RegExp(`</?${t}(?:\\s[^>]*)?/?>`, 'gi'), '');
     }

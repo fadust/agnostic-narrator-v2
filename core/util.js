@@ -76,12 +76,19 @@ export function setPath(obj, path, value) {
 // Word sets for similarity, cached: replay compares every new fact with every fact on record, and building the sets was
 // 75% of replay time (audit, 21 Nov 2026). The sets are only read, never changed.
 const SIM_CACHE = new Map();
+const EAST_ASIAN_WORDS = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+/gu;
 function simTok(s) {
     const k = String(s ?? '');
     let v = SIM_CACHE.get(k);
     if (!v) {
         if (SIM_CACHE.size > 20000) SIM_CACHE.clear();
-        v = new Set(nameKey(k).replace(/[^\p{L}\p{N} ]/gu, ' ').split(' ').filter(w => w.length > 2));
+        const normal = nameKey(k);
+        const pairs = new Set();
+        for (const [run] of normal.matchAll(EAST_ASIAN_WORDS)) {
+            const chars = [...run];
+            for (let i = 1; i < chars.length; i++) pairs.add(chars[i - 1] + chars[i]);
+        }
+        v = { words: new Set(normal.replace(/[^\p{L}\p{N} ]/gu, ' ').split(' ').filter(w => w.length > 2)), pairs };
         SIM_CACHE.set(k, v);
     }
     return v;
@@ -89,7 +96,13 @@ function simTok(s) {
 
 /** Word-overlap similarity, used to keep retconned facts from coming back reworded. */
 export function similarity(a, b) {
-    const A = simTok(a), B = simTok(b);
+    const left = simTok(a), right = simTok(b);
+    if (left.pairs.size && right.pairs.size) {
+        let shared = 0;
+        for (const pair of left.pairs) if (right.pairs.has(pair)) shared++;
+        return 2 * shared / (left.pairs.size + right.pairs.size);
+    }
+    const A = left.words, B = right.words;
     if (!A.size || !B.size) return nameKey(a) === nameKey(b) ? 1 : 0;
     let inter = 0;
     for (const w of A) if (B.has(w)) inter++;

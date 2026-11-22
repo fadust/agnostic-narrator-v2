@@ -59,7 +59,7 @@ test('/director redraft writes a fresh arc as a player edit and re-plans', async
     const before = director.view();
     assert.ok(before.arc, 'the first arc was drafted');
     const plans = state.calls.filter(c => c.module === 'planner').length;
-    assert.equal(await director.redraftArc(), true);
+    assert.ok((await director.redraftArc()).includes('arc'));
     const redraft = state.calls.filter(c => c.module === 'planner').slice(plans);
     assert.ok(redraft.some(c => /## Redraft\n/.test(c.messages[1].content)), 'the arc call says it is a redraft');
     assert.ok(redraft.some(c => !c.messages[0].content.includes('outline the arc')), 'a fresh plan follows');

@@ -2,6 +2,15 @@
 
 Newest first. Each entry says which parts changed, so you know what to re-import.
 
+# 0.3.0-rc.1 (Agnostic Narrator V2)
+
+- Chat switches release pending Director work and isolate World Info, generated openings and Inspector drafts.
+- Swiping, editing and deleting remove superseded Director records. A swipe back is read fresh.
+- Individual profile failures leave other characters eligible, and lasting milestones wait for both supporting replies.
+- Explicit commands, faithful group restoration, keyboard and touch controls, retained drafts, and searchable facts with source links.
+- Estimated story-context budget, shared memory-provider coverage, and faster replay in long chats.
+- Re-import the Mature companion preset to use the updated Explicit setting in generated prompts.
+
 # 0.2.2 (22 Nov 2026)
 
 ## Two companion presets, Mature and PG (22 Nov 2026)

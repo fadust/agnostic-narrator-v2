@@ -1,0 +1,3 @@
+# The rules document is generated from these files and compared byte-for-byte.
+card/src/*.md text eol=lf
+docs/rules.md text eol=lf

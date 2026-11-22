@@ -21,8 +21,8 @@ Needs SillyTavern 1.19.0 or later, with its newer macro engine; the card and pre
 ## Quick start
 
 1. Install the extension in one of two ways:
-   - **Lean:** download the zip from the [latest release](https://github.com/fadust/agnostic-narrator/releases/latest) and put its `narrator-director` folder in `SillyTavern/public/scripts/extensions/third-party/`.
-   - **From the repository:** in **Extensions → Install extension**, paste `https://github.com/fadust/agnostic-narrator`. This also brings the tests and docs.
+   - **Lean:** open the V2 release ZIP and put its `narrator-director` folder in `SillyTavern/public/scripts/extensions/third-party/`.
+   - **From the repository:** in **Extensions → Install extension**, paste `https://github.com/fadust/agnostic-narrator-v2` to install the currently published source.
 2. Import `Narrator.card.json` as a character, and allow its regex scripts when asked.
 3. Import both companion presets, **Narrator Companion (Mature)** and **Narrator Companion (PG)**. Select the one that matches your story's rating; Mature is the default.
 4. Optional: import `Narrator Director.quickreplies.json` for buttons.
@@ -42,7 +42,7 @@ A few commands you will use most (all of them: [docs/reference.md](docs/referenc
 | `/director <words>` | A direction for the story, for example `/director a storm is coming` |
 | `/director settle <text>` | Close a matter for good: no one presses it again |
 | `/director redraft` | A fresh arc and spine from where the story stands |
-| `/director retcon <text>` | Undo a fact; refuses very short text and lists large matches first (add `!` to confirm) |
+| `/director retcon: <text>` | Undo a fact. Use `!` to confirm a broad match |
 | `/director pg` / `pg off` | PG or mature rating for this story |
 | `/director retry` | Try failed director calls again now |
 
@@ -78,11 +78,7 @@ On a 47-turn test chat the director made about 2.3 calls per turn, or 4 to 5 on 
 
 ## Status
 
-Version 0.2.2. Tests:
-- **226 unit tests pass.**
-- **30 end-to-end checks pass.** They run a real SillyTavern with a scripted stand-in for the models: `ST_DIR=<SillyTavern folder> npm run e2e`, which needs Playwright.
-
-The director has been play-tested in long live chats. Models differ a great deal in how well they follow its formats, so run the fixture suite on your director model before relying on it: [docs/development.md](docs/development.md#the-fixture-suite).
+Release candidate 0.3.0-rc.1. Unit tests cover replay, prompts and compatibility. Browser tests run against disposable SillyTavern 1.19.0 with a scripted local model. The earlier 0.2.x versions were also play-tested in long live chats. See [the verification record](docs/v2-verification.md) and [the model fixture suite](docs/development.md#the-fixture-suite).
 
 ## Licence
 

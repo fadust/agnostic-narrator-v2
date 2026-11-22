@@ -1,21 +1,18 @@
 // End-to-end checks against a real SillyTavern with a mock LLM behind it.
 // Usage: ST_DIR=/path/to/SillyTavern node tests/e2e/run.mjs
-// Starts SillyTavern on a throwaway data root, installs the extension, imports the card and plays through
+// Copies the host into a disposable fixture, installs the extension there, imports the card and plays through
 // the acceptance checks that need the real platform (prompt assembly, World Info, swipes, groups).
 
-import { spawn } from 'node:child_process';
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startMock } from './mock-llm.mjs';
+import { startFixture } from './fixture.mjs';
 
 const { chromium } = createRequire(import.meta.url)('playwright');
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const ST = process.env.ST_DIR;
-if (!ST || !existsSync(join(ST, 'server.js'))) { console.error('Set ST_DIR to a SillyTavern checkout (npm install done).'); process.exit(2); }
-const PORT = 8133, MOCK = 8134;
+const packageDir = process.env.ND_PACKAGE_DIR;
+const assets = packageDir || join(root, 'dist');
 const shots = process.env.SHOTS_DIR;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -24,43 +21,25 @@ async function check(name, fn) {
     try { await fn(); results.push([true, name]); console.log(`  ok   ${name}`); }
     catch (e) {
         results.push([false, name, e.message]);
-        console.log(`  FAIL ${name}\n       ${String(e.message).split('\n')[0]}`);
+        console.log(`  FAIL ${name}\n       ${String(e.message).split('\n').slice(0, 7).join('\n       ')}`);
         if (shots) await page.screenshot({ path: join(shots, `fail-${results.length}.png`) }).catch(() => { });
     }
 }
 const assert = (cond, msg) => { if (!cond) throw new Error(msg); };
 
 // ---------------------------------------------------------------- boot
-const extDir = join(ST, 'public/scripts/extensions/third-party/narrator-director');
-rmSync(extDir, { recursive: true, force: true });
-// The extension lives at the repo root (so SillyTavern can install it from the GitHub URL); copy only its own files.
-for (const f of ['index.js', 'manifest.json', 'style.css', 'core', 'st']) cpSync(join(root, f), join(extDir, f), { recursive: true });
-const dataRoot = mkdtempSync(join(tmpdir(), 'nd-e2e-'));
-const mock = await startMock(MOCK);
-const env = { ...process.env, NO_PROXY: '127.0.0.1,localhost', no_proxy: '127.0.0.1,localhost' };
-const startServer = () => spawn('node', ['server.js', '--port', String(PORT), '--dataRoot', dataRoot, '--browserLaunchEnabled', 'false'], { cwd: ST, env, stdio: 'ignore' });
-const up = async () => { for (let i = 0; i < 120; i++) { try { if ((await fetch(`http://127.0.0.1:${PORT}/`)).ok) return; } catch { /* not yet */ } await sleep(500); } throw new Error('SillyTavern did not start'); };
-let server = startServer();
-await up();
-// First start wrote default settings; point the connection at the mock and restart.
-server.kill(); await sleep(1000);
-const settingsPath = join(dataRoot, 'default-user/settings.json');
-const st = JSON.parse(readFileSync(settingsPath, 'utf8'));
-Object.assign(st, { firstRun: false, main_api: 'openai', username: 'Rowan' });
-Object.assign(st.oai_settings, { chat_completion_source: 'custom', custom_url: `http://127.0.0.1:${MOCK}/v1`, custom_model: 'mock', stream_openai: false, openai_max_context: 32000 });
-// The default context (about 4k) no longer fits the preset, card and notes, and SillyTavern would drop the chat history.
-st.power_user.auto_connect = true;
-// Other third-party extensions in the checkout (modals, themes, input helpers) would get in the way: run with ours alone.
-const thirdParty = join(ST, 'public/scripts/extensions/third-party');
-st.extension_settings ??= {};
-st.extension_settings.disabledExtensions = readdirSync(thirdParty, { withFileTypes: true })
-    .filter(d => d.isDirectory() && d.name !== 'narrator-director').map(d => `third-party/${d.name}`);
-writeFileSync(settingsPath, JSON.stringify(st));
-server = startServer();
-await up();
-
-const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width: 1500, height: 950 } });
+const { baseURL, page, mock, close, restart } = await startFixture(process.env.ST_DIR,
+    packageDir ? join(packageDir, 'narrator-director') : root, chromium);
+async function abort(error, code = 3) {
+    if (error) console.error(error);
+    try { await close(); }
+    catch (cleanupError) { console.error(cleanupError); }
+    process.exit(code);
+}
+process.once('uncaughtException', error => abort(error));
+process.once('unhandledRejection', error => abort(error));
+process.once('SIGINT', () => abort(null, 130));
+process.once('SIGTERM', () => abort(null, 143));
 const pageErrors = [];
 page.on('pageerror', e => pageErrors.push(e.message));
 page.on('console', m => { if (m.type() === 'error' && /Narrator Director/.test(m.text())) pageErrors.push(m.text()); });
@@ -69,11 +48,12 @@ page.on('console', m => { if (process.env.VERBOSE) console.log('   >', m.type(),
 page.on('crash', () => console.log('PAGE CRASHED'));
 page.on('close', () => console.log('PAGE CLOSED'));
 page.on('framenavigated', f => { if (f === page.mainFrame()) console.log('  (navigated)', f.url()); });
-process.on('uncaughtException', (e) => { console.error(e); server.kill(); process.exit(3); });
-process.on('unhandledRejection', (e) => { console.error(e); server.kill(); process.exit(3); });
-await page.goto(`http://127.0.0.1:${PORT}/`);
-await page.waitForFunction(() => window.SillyTavern?.getContext && window.narratorDirector && !document.querySelector('#preloader'), null, { timeout: 90000 });
-await sleep(2500);
+async function openHost() {
+    await page.goto(baseURL);
+    await page.waitForFunction(() => window.SillyTavern?.getContext && window.narratorDirector && !document.querySelector('#preloader'), null, { timeout: 90000 });
+    await sleep(2500);
+}
+await openHost();
 
 // ---------------------------------------------------------------- helpers
 const ev = (fn, arg) => page.evaluate(fn, arg);
@@ -117,17 +97,52 @@ const post = (url, body) => ev(async ({ url, body }) => {
     return r.ok ? r.json().catch(() => ({})) : Promise.reject(new Error(`${url} ${r.status}`));
 }, { url, body });
 const shot = async (name) => { if (shots) await page.screenshot({ path: join(shots, `${name}.png`) }); };
+const activeChat = () => ev(() => SillyTavern.getContext().getCurrentChatId());
+async function openSolo(id) {
+    await ev(chatId => SillyTavern.getContext().openCharacterChat(chatId), id);
+    assert(await activeChat() === id, `SillyTavern did not open ${id}`);
+}
+async function newSolo() {
+    await ev(async () => (await import('/script.js')).doNewChat());
+    await idle();
+    return activeChat();
+}
+async function waitForCall(kind, from, includes = '') {
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline) {
+        const found = mock.log.slice(from).find(entry => entry.kind === kind && flat(entry.messages).includes(includes));
+        if (found) return found;
+        await sleep(50);
+    }
+    throw new Error(`No ${kind} request reached the scripted model${includes ? ` with ${includes}` : ''}`);
+}
+const openingState = () => ev(() => {
+    const c = SillyTavern.getContext();
+    return JSON.stringify({
+        premise: c.chatMetadata.narrator_director?.setup?.premise ?? null,
+        messages: c.chat.map(({ mes, swipe_id, swipes }) => ({ mes, swipe_id, swipes })),
+    });
+});
+const setScenario = scenario => ev(async text => {
+    const c = SillyTavern.getContext();
+    c.chatMetadata.scenario = text;
+    await c.saveMetadata();
+}, scenario);
 
 /** The main prompt of one companion preset (Mature or PG). */
-const presetMain = (label) => JSON.parse(readFileSync(join(root, `dist/Narrator Companion (${label}).preset.json`), 'utf8')).prompts.find(p => p.identifier === 'main').content;
+const preset = (label) => JSON.parse(readFileSync(join(assets, `Narrator Companion (${label}).preset.json`), 'utf8'));
+const presetMain = (label) => preset(label).prompts.find(p => p.identifier === 'main').content;
 const useMain = (content) => ev((main) => { SillyTavern.getContext().chatCompletionSettings.prompts.find(x => x.identifier === 'main').content = main; }, content);
 
 // ---------------------------------------------------------------- solo chat
 console.log('Solo chat');
 // Use the companion preset's main prompt, so its rating gates are tested in a real prompt.
-await ev((main) => { const p = SillyTavern.getContext().chatCompletionSettings.prompts.find(x => x.identifier === 'main'); p.content = main; },
-    presetMain('Mature'));
-await importCard(readFileSync(join(root, 'dist/Narrator.card.json'), 'utf8'), 'Narrator');
+await ev(({ main, maxTokens }) => {
+    const settings = SillyTavern.getContext().chatCompletionSettings;
+    settings.prompts.find(x => x.identifier === 'main').content = main;
+    settings.openai_max_tokens = maxTokens;
+}, { main: presetMain('Mature'), maxTokens: preset('Mature').openai_max_tokens });
+await importCard(readFileSync(join(assets, 'Narrator.card.json'), 'utf8'), 'Narrator');
 await ev(() => {
     const c = SillyTavern.getContext();
     c.powerUserSettings.persona_description = 'Rowan is a wiry courier, fast on their feet, new to the village.';
@@ -317,13 +332,13 @@ await check('inspector: the scene form saves a location with a comma, and the ed
     assert(s.scene.location.value === 'the Mill Yard, east side' && s.scene.mood === 'tense', JSON.stringify(s.scene));
     assert(s.scene.present.includes('Captain Hale') && s.scene.present.includes('Mira'), `present: ${s.scene.present}`);
     await send('I look around the yard.');
-    assert(flat(lastPrompt()).includes('note: the record of scene was corrected'), 'no operation note');
+    assert(/note: the record(?: of scene)? was corrected/i.test(flat(lastPrompt())), 'no operation note');
 });
 
 await check('inspector: every tab renders with nothing folded away, and forms on cast, plan and record work', async () => {
     await slash('/director inspect');
     for (const t of ['now', 'scene', 'cast', 'story', 'plan', 'record', 'log']) {
-        await page.click(`#nd-inspector [data-nd-tab="${t}"]`);
+        await page.click(`#nd-inspector .nd-tabs [data-nd-tab="${t}"]`);
         const info = await ev(() => ({ text: document.querySelector('#nd-body').innerText.length, folded: document.querySelectorAll('#nd-body details').length, error: /TypeError|ReferenceError/.test(document.querySelector('#nd-body').innerText) }));
         assert(info.text > 40 && info.folded === 0 && !info.error, `${t}: ${JSON.stringify(info)}`);
         await shot(`inspector-${t}`);
@@ -341,7 +356,9 @@ await check('inspector: every tab renders with nothing folded away, and forms on
     });
     assert(disclosed.missing.length === 0, `settings with no control: ${disclosed.missing}`);
     assert(disclosed.tooltips === 0 && disclosed.hints > 10 && !disclosed.folded, JSON.stringify(disclosed));
-    await page.click('#nd-inspector [data-nd-tab="log"]');
+    await page.click('#nd-inspector .nd-tabs [data-nd-tab="log"]');
+    const stateButton = page.locator('#nd-body [data-act="show-state"]');
+    if (await stateButton.count()) await stateButton.click();
     const logText = await page.innerText('#nd-body');
     assert(logText.includes('nar_genre_fantasy = 1') && logText.includes('"lastPlanTurn"'), 'variables or full state not shown');
     await page.click('#nd-inspector [data-nd-tab="record"]');
@@ -410,7 +427,7 @@ await check('rating: mature by default; /director pg turns adult lore off and as
     assert(vars.nar_pg === '1' && !vars.nar_explicit, `pg flags: ${JSON.stringify(vars)}`);
     assert(text.includes('This story is rated PG') && !text.includes('Explicit content is part of this story'), 'PG lore entry not in effect');
     assert(!text.includes('## 7. Adult Content') && !text.includes('for an adult audience') && text.includes('up to the closed door'), 'preset did not switch to PG');
-    assert(storyOf(lastPrompt()).includes('rating: PG'), 'story profile line missing');
+    assert(/\brating:\s*PG\b/i.test(storyOf(lastPrompt())), 'story profile rating missing');
     await slash('/director pg off');
     await useMain(presetMain('Mature'));
     await send('I stand up.');
@@ -457,7 +474,7 @@ await check('director calls go through a Connection Manager profile when one is 
         const c = SillyTavern.getContext();
         (c.extensionSettings.connectionManager.profiles ??= []).push({ id: 'nd-test-profile', name: 'Director (mock)', mode: 'cc', api: 'custom', model: 'mock', 'api-url': url });
         c.extensionSettings.narrator_director.profile = 'nd-test-profile';
-    }, `http://127.0.0.1:${MOCK}/v1`);
+    }, `http://127.0.0.1:${mock.port}/v1`);
     const n = mock.log.filter(l => l.kind === 'observer').length;
     await send('I keep walking.');
     assert(mock.log.filter(l => l.kind === 'observer').length === n + 1, 'no observer call through the profile');
@@ -468,6 +485,550 @@ await check('director calls go through a Connection Manager profile when one is 
     assert(!s.meta.lagging, 'the reply was not read');
 });
 
+// ---------------------------------------------------------------- inspector interactions
+console.log('Inspector interactions');
+const directorTab = name => page.locator(`#nd-inspector .nd-tabs [data-nd-tab="${name}"]`);
+const feedbackIs = text => page.waitForFunction(text => document.querySelector('#nd-feedback').textContent.includes(text), text);
+async function inspectorDirection(text) {
+    await page.locator('#nd-say').fill(text);
+    await page.locator('#nd-say').press('Enter');
+}
+
+await check('keyboard saves a retained Scene draft, while later edits and swipes can still change Location', async () => {
+    await newSolo();
+    const original = 'Mira waits in the Glass Courtyard.';
+    const edited = 'Mira rests in the River Yard.';
+    const alternative = 'Mira watches in the Lantern Annex.';
+    mock.control.narration = original;
+    await send('I look for Mira near the house.');
+    assert((await view()).scene.location.value === 'the Glass Courtyard', 'test needs an observed original location');
+    await ev(() => {
+        const c = SillyTavern.getContext();
+        window.fixtureHostEvents = [];
+        for (const name of ['GENERATION_STARTED', 'GENERATION_AFTER_COMMANDS', 'GENERATION_ENDED', 'MESSAGE_EDITED', 'MESSAGE_UPDATED']) {
+            c.eventSource.on(c.eventTypes[name], (value, options, dryRun) => {
+                if (!dryRun) window.fixtureHostEvents.push([name, value]);
+            });
+        }
+    });
+
+    const composer = page.locator('#send_textarea');
+    async function openWithKeyboard() {
+        await composer.fill('/director inspect');
+        await composer.press('Enter');
+        await page.waitForFunction(() => document.querySelector('#nd-inspector .nd-active') === document.activeElement);
+    }
+    await openWithKeyboard();
+    await directorTab('now').focus();
+    const tabOrder = ['now', 'scene', 'cast', 'story', 'plan', 'record', 'log'];
+    for (const tab of tabOrder) {
+        assert(await ev(() => document.activeElement.dataset.ndTab) === tab, `Keyboard did not reach ${tab}`);
+        if (tab !== 'log') await page.keyboard.press('Tab');
+    }
+    for (let i = 0; i < 5; i++) await page.keyboard.press('Shift+Tab');
+    await page.keyboard.press('Enter');
+    assert(await directorTab('scene').getAttribute('aria-current') === 'true', 'Keyboard did not activate Scene');
+    const mood = page.getByRole('textbox', { name: 'Mood', exact: true });
+    const draft = 'quietly expectant';
+    await mood.fill(draft);
+    await page.keyboard.press('Escape');
+    await page.locator('#nd-inspector').waitFor({ state: 'hidden' });
+    assert(await ev(() => document.activeElement.id) === 'send_textarea', 'Closing did not return focus to the composer');
+    assert((await view()).scene.mood !== draft, 'Closing saved an unsaved draft');
+    await openWithKeyboard();
+    assert(await mood.inputValue() === draft && await page.textContent('#nd-unsaved') === 'unsaved changes', 'Reopening discarded the draft');
+    await shot('inspector-desktop-retained-draft');
+
+    await mood.focus();
+    for (let i = 0; i < 16 && !await ev(() => document.activeElement.dataset.act === 'save-scene'); i++) await page.keyboard.press('Tab');
+    assert(await ev(() => document.activeElement.dataset.act === 'save-scene'), 'Keyboard could not reach Save the scene');
+    await page.keyboard.press('Enter');
+    await feedbackIs('Scene saved');
+    const liveFeedback = page.locator('#nd-inspector').getByRole('status').filter({ hasText: 'Scene saved' });
+    assert(await liveFeedback.isVisible(), 'Scene save feedback did not reach the drawer’s live status');
+    assert((await view()).scene.mood === draft && !await page.textContent('#nd-unsaved'), 'Keyboard Save did not commit the Mood draft');
+    await page.click('#nd-close');
+
+    const reply = page.locator('#chat .mes').last();
+    let from = mock.log.length;
+    await reply.hover();
+    await reply.locator('.mes_edit').click();
+    await reply.locator('.edit_textarea').fill(edited);
+    await reply.locator('.mes_edit_done').click();
+    try {
+        await waitForCall('observer', from, edited);
+    } catch (error) {
+        const diagnostics = await ev(() => {
+            const { director, idle } = window.narratorDirector;
+            return { events: window.fixtureHostEvents, idle: idle(), reading: director.nextUnread()?.text };
+        });
+        throw new Error(`${error.message}. Host state ${JSON.stringify(diagnostics)}`);
+    }
+    await idle();
+    assert((await view()).scene.location.value === 'the River Yard', 'Saving Mood froze the old Location after a reply edit');
+
+    from = mock.log.length;
+    mock.control.narration = alternative;
+    await ev(() => SillyTavern.getContext().swipe.right());
+    await waitForCall('observer', from, alternative);
+    await idle();
+    assert((await view()).scene.location.value === 'the Lantern Annex', 'Saving Mood froze the old Location after a swipe');
+});
+
+await check('390px touch can navigate, choose PG, save a scene and close the Inspector', async () => {
+    const viewport = page.viewportSize();
+    const cdp = await page.context().newCDPSession(page);
+    async function tap(locator) {
+        await locator.scrollIntoViewIfNeeded();
+        const box = await locator.boundingBox();
+        assert(box, 'Touch target was not visible');
+        assert(box.width >= 24 && box.height >= 44, `Touch target is ${box.width.toFixed(1)} × ${box.height.toFixed(1)} CSS px`);
+        const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+        const blocked = await locator.evaluate((node, { x, y }) => {
+            const hit = document.elementFromPoint(x, y);
+            return node.contains(hit) ? '' : `${hit?.tagName ?? 'no target'}.${hit?.className ?? ''}`;
+        }, point);
+        assert(!blocked, `Touch target was covered by ${blocked}`);
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+        await sleep(50);
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        return [box.width, box.height].map(Math.round).join('×');
+    }
+    try {
+        await page.setViewportSize({ width: 390, height: 844 });
+        await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+        await useMain(presetMain('PG'));
+        await slash('/director inspect');
+        await shot('inspector-390px-before-touch');
+        await ev(() => toastr.clear());
+        await page.locator('#toast-container').waitFor({ state: 'hidden' });
+        await tap(directorTab('now'));
+        await page.waitForFunction(() => document.querySelector('.nd-tabs [data-nd-tab="now"]').getAttribute('aria-current') === 'true');
+        const pg = page.getByRole('button', { name: 'PG', exact: true });
+        await tap(pg);
+        await feedbackIs('PG rating');
+        assert(await pg.getAttribute('aria-pressed') === 'true', 'Touch did not select PG');
+        await tap(directorTab('scene'));
+        const inspector = page.locator('#nd-inspector');
+        const layout = await inspector.evaluate(n => {
+            const rect = n.getBoundingClientRect();
+            const body = n.querySelector('#nd-body');
+            const css = getComputedStyle(n);
+            return {
+                fits: rect.left >= 0 && rect.right <= window.innerWidth && n.scrollWidth <= n.clientWidth && body.scrollWidth <= body.clientWidth,
+                top: rect.top, bottom: rect.bottom, height: rect.height, viewport: window.innerHeight,
+                position: css.position, background: css.backgroundColor, zIndex: css.zIndex,
+                bodyPosition: getComputedStyle(document.body).position, htmlTransform: getComputedStyle(document.documentElement).transform,
+            };
+        });
+        console.log(`       390px inspector layout ${JSON.stringify(layout)}`);
+        assert(layout.fits && layout.bottom >= layout.viewport - 2 && /^rgb\(/.test(layout.background),
+            'Inspector clipped, failed to fill the available narrow viewport or lacked an opaque base');
+        await page.getByRole('textbox', { name: 'Mood', exact: true }).fill('still and quiet');
+        await shot('inspector-390px-draft');
+        const save = await tap(page.getByRole('button', { name: 'Save the scene' }));
+        await feedbackIs('Scene saved');
+        assert((await view()).scene.mood === 'still and quiet', 'Touch did not save the Scene edit');
+        const closeSize = await tap(page.getByRole('button', { name: 'Close', exact: true }));
+        await inspector.waitFor({ state: 'hidden' });
+        console.log(`       390 CSS px, Chromium touch: Save ${save}, Close ${closeSize}`);
+    } finally {
+        await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+        await cdp.detach();
+        await page.setViewportSize(viewport);
+    }
+});
+
+await check('Mature Explicit off remains in force after a model-proposed erotica genre and reaches the narrator prompt', async () => {
+    await newSolo();
+    await useMain(presetMain('Mature'));
+    await setScenario('Rowan waits for the rain to stop while visiting an isolated village.');
+    await slash('/director profile');
+    await idle();
+    await send('I wait for the rain to stop.');
+    assert(flat(lastPrompt()).includes('## 7. Adult Content'), 'The matching Mature preset did not start with its default on');
+    assert(/Explicit content is off/.test(await slash('/director explicit off')), 'Explicit off did not report a saved change');
+    mock.control.revisedGenre = { ...((await view()).genre), dominant: 'erotica', explicit: true };
+    try {
+        assert(/profile revised/i.test(await slash('/director revise genre use the proposed genre')), 'The model-proposed genre did not save');
+    } finally {
+        mock.control.revisedGenre = null;
+    }
+    const genre = (await view()).genre;
+    assert(genre.dominant === 'erotica' && !genre.pg && genre.explicit === false, 'A model-proposed genre changed the saved Explicit choice');
+    await send('I check whether the rain has eased.');
+    const prompt = flat(lastPrompt());
+    assert(prompt.includes('for an adult audience') && prompt.includes('Keep intimacy at the closed door')
+        && !prompt.includes('## 7. Adult Content') && !prompt.includes('Explicit content is part of this story')
+        && !prompt.includes('{{if'), 'The actual Mature model request contradicted Explicit off');
+    await slash('/director inspect');
+    await directorTab('now').click();
+    assert(/Explicit content is off/.test(await page.textContent('#nd-body')), 'Now does not match the saved Explicit state');
+    assert(await page.getByRole('button', { name: 'Mature', exact: true }).getAttribute('aria-pressed') === 'true', 'Now does not show Mature as selected');
+    await page.click('#nd-close');
+});
+
+await check('commands report refusal or partial success, and prose containing rewrite creates no new swipe', async () => {
+    await newSolo();
+    await slash('/director inspect');
+    await directorTab('now').click();
+    assert(/valid story profile is needed/i.test(await slash('/director confirm')), 'Confirm claimed success without a profile');
+    await page.getByRole('button', { name: 'PG', exact: true }).click();
+    await feedbackIs('The story profile is not ready yet.');
+    await send('I listen to the rain.');
+    assert(/did not return a valid story profile/i.test(await slash('/director revise genre try an invalid change')), 'Revise claimed success on malformed output');
+    const newArc = 'Find what changed at the north gate';
+    mock.control.failSpine = true;
+    mock.control.arcGoal = newArc;
+    const partialFrom = mock.log.length;
+    try {
+        await slash('/director inspect');
+        await inspectorDirection('redraft');
+        await feedbackIs('Redrafted arc');
+        const feedback = await page.textContent('#nd-feedback');
+        assert(feedback.includes('See the Log tab') && !feedback.includes('spine and plan'), `Redraft misreported the saved parts: ${feedback}`);
+        assert((await view()).arc?.goal === newArc, 'Redraft claimed an arc it had not saved');
+        await waitForCall('spine', partialFrom);
+    } finally {
+        mock.control.failSpine = false;
+        mock.control.arcGoal = null;
+    }
+
+    await idle();
+    const before = await openingState();
+    const requests = narratorCalls().length;
+    await inspectorDirection('rewrite the ending darker');
+    await feedbackIs('Noted.');
+    await idle();
+    assert(await openingState() === before && narratorCalls().length === requests, 'Plain directions generated a swipe');
+    assert(await ev(() => SillyTavern.getContext().chat.at(-1).narrator_ops
+        .some(op => op.kind === 'instruction' && op.text === 'rewrite the ending darker')), 'The original prose direction did not save');
+    await page.click('#nd-close');
+    const oldSwipes = await ev(() => SillyTavern.getContext().chat.at(-1).swipes.length);
+    mock.control.narration = 'Mira closes the shutters over the lamp.';
+    await slash('/director rewrite: less dialogue');
+    await page.waitForFunction(() => SillyTavern.getContext().chat.at(-1).mes === 'Mira closes the shutters over the lamp.');
+    await idle();
+    assert(await ev(() => SillyTavern.getContext().chat.at(-1).swipes.length) === oldSwipes + 1
+        && narratorCalls().length === requests + 1, 'The explicit Rewrite form did not create one new swipe');
+});
+
+await check('Record search filters facts and Source focuses the matching chat reply', async () => {
+    await newSolo();
+    mock.control.narration = 'Mira discovers a Bronze Locket. Old Tam opens an Iron Chest.';
+    await send('I look through the old cabinets.');
+    await slash('/director inspect');
+    await directorTab('record').click();
+    const record = page.locator('#nd-body');
+    assert(/Bronze Locket/.test(await record.innerText()) && /Iron Chest/.test(await record.innerText()), 'Record needs both fixture facts before search');
+    const search = record.getByRole('searchbox', { name: 'Search this record' });
+    await search.fill('bronze locket');
+    await search.press('Enter');
+    const rows = record.locator('.nd-line');
+    assert(await rows.filter({ hasText: 'Bronze Locket' }).count() === 1 && await rows.filter({ hasText: 'Iron Chest' }).count() === 0,
+        'Search did not keep only the matching fact');
+    await shot('inspector-record-search');
+    await rows.filter({ hasText: 'Bronze Locket' }).getByRole('button', { name: 'Source', exact: true }).click();
+    await page.locator('#nd-inspector').waitFor({ state: 'hidden' });
+    assert(await ev(() => document.activeElement.matches('#chat .mes') && document.activeElement.textContent.includes('Bronze Locket')),
+        'Source did not focus the evidenced reply in the host chat');
+});
+
+// ---------------------------------------------------------------- real chat switches
+console.log('Chat isolation');
+await ev(() => { SillyTavern.getContext().extensionSettings.narrator_director.profile = ''; });
+
+await check('a pending opening cancels on chat switch and saves when the player stays', async () => {
+    const source = await newSolo();
+    const sourceBefore = await openingState();
+    const target = await newSolo();
+    assert(target !== source && await chatLen() === 1, 'test needs two independent chats, each with only its greeting');
+    const targetBefore = await openingState();
+    await openSolo(source);
+    await idle();
+
+    const from = mock.log.length;
+    const releaseOpening = mock.pauseNext('opening');
+    const opening = slash('/director opening');
+    try {
+        await page.locator('dialog[open] .popup-button-ok').click();
+        await waitForCall('opening', from);
+        await openSolo(target);
+        releaseOpening();
+        const result = await opening;
+        await idle();
+        assert(await activeChat() === target && !/opening (drafted|posted)/i.test(result), `Unexpected opening result: ${result}`);
+        assert(await openingState() === targetBefore, 'the target chat received a premise, message or swipe');
+        await openSolo(target);
+        assert(await openingState() === targetBefore, 'the target chat changed on disk');
+        await openSolo(source);
+        assert(await openingState() === sourceBefore, 'the source chat changed on disk');
+    } finally {
+        releaseOpening();
+    }
+    const next = mock.log.length;
+    const releaseSameChat = mock.pauseNext('opening');
+    const sameChatOpening = slash('/director opening');
+    try {
+        await page.locator('dialog[open] .popup-button-ok').click();
+        await waitForCall('opening', next);
+        const replaced = await ev(() => {
+            const c = SillyTavern.getContext();
+            const before = c.chatMetadata;
+            c.updateChatMetadata({ fixtureMetadata: true });
+            const after = SillyTavern.getContext().chatMetadata;
+            return before !== after && !!before.integrity && before.integrity === after.integrity;
+        });
+        assert(replaced, 'SillyTavern did not replace the metadata object within the same chat');
+    } finally {
+        releaseSameChat();
+    }
+    await sameChatOpening;
+    await openSolo(source);
+    const saved = JSON.parse(await openingState());
+    assert(saved.premise === 'A drought year.' && saved.messages[0]?.swipes?.includes('Dust hangs over the Greywell road as you arrive.'),
+        'the subsequent opening did not save its premise and swipe in the source chat');
+    await idle();
+});
+
+await check('a chat switch clears the Scene draft and excludes the old chat lore before World Info reloads', async () => {
+    const target = await newSolo();
+    const targetScenario = 'A port crew inspects the light at Blue Beacon.';
+    await setScenario(targetScenario);
+    const source = await newSolo();
+    assert(source !== target, 'test needs separate lore and profile chats');
+    const book = 'Switch-only lore';
+    const marker = 'Silver Weir seal belongs to the old keeper.';
+    await post('/api/worldinfo/edit', { name: book, data: { entries: { 0: {
+        uid: 0, key: ['Silver Weir'], keysecondary: [], comment: 'Silver Weir',
+        content: marker, constant: true, selective: false, order: 100, position: 0, disable: false,
+    } } } });
+    await ev(async name => {
+        const c = SillyTavern.getContext();
+        c.chatMetadata.world_info = name;
+        await c.saveMetadata();
+    }, book);
+    await send('I look for the Silver Weir.');
+    assert(flat(lastPrompt()).includes(marker), 'the source chat lore did not fire in SillyTavern');
+    let from = mock.log.length;
+    await slash('/director profile');
+    await waitForCall('genre', from, marker);
+
+    await slash('/director inspect');
+    await page.click('#nd-inspector [data-nd-tab="scene"]');
+    const sourceDraft = 'Uncommitted Copper Study';
+    const location = page.locator('#nd-body [data-f="location"]');
+    await location.fill(sourceDraft);
+    assert(await page.textContent('#nd-unsaved') === 'unsaved changes', 'the source fixture needs an unsaved scene');
+    await ev(() => {
+        const c = SillyTavern.getContext();
+        const event = c.eventTypes.WORLDINFO_ENTRIES_LOADED;
+        const emit = c.eventSource.emit;
+        const queued = [];
+        c.eventSource.emit = async function (type, ...args) {
+            // Delay delivery of the host's precached World Info without blocking the chat switch itself.
+            if (type === event) {
+                queued.push(args);
+                return;
+            }
+            return emit.call(this, type, ...args);
+        };
+        window.restoreWorldInfoDelivery = async deliver => {
+            c.eventSource.emit = emit;
+            delete window.restoreWorldInfoDelivery;
+            if (deliver) {
+                for (const args of queued) await c.eventSource.emit(event, ...args);
+            }
+            return queued.length;
+        };
+    });
+    from = mock.log.length;
+    let held, targetLocation, targetDirty, targetProfile;
+    try {
+        await openSolo(target);
+        targetLocation = await location.inputValue();
+        targetDirty = await page.textContent('#nd-unsaved');
+        await page.click('#nd-body [data-act="save-scene"]');
+        await ev(() => SillyTavern.getContext().saveChat());
+        await page.click('#nd-close');
+        await slash('/director profile');
+        targetProfile = await waitForCall('genre', from, targetScenario);
+    } finally {
+        held = await ev(deliver => window.restoreWorldInfoDelivery(deliver), await activeChat() === target);
+    }
+    assert(held > 0, 'the fixture did not exercise delayed World Info delivery');
+    assert(!flat(targetProfile.messages).includes('Silver Weir'), 'the target profile used the previous chat’s World Info');
+    assert(targetLocation !== sourceDraft && !targetDirty,
+        `the target inspector retained source draft information (location: ${JSON.stringify(targetLocation)}, badge: ${JSON.stringify(targetDirty)})`);
+    assert((await view()).scene.location.value !== sourceDraft, 'the source scene draft reached the target chat');
+    await openSolo(target);
+    assert((await view()).scene.location.value !== sourceDraft, 'the source scene draft was saved in the target chat');
+    await idle();
+});
+
+await check('a held current-connection call in one chat does not block work in the next', async () => {
+    const target = await newSolo();
+    const targetScenario = 'The last train crosses North Bridge at dawn.';
+    await setScenario(targetScenario);
+    const source = await newSolo();
+    const sourceScenario = 'The town rings a bell at Copper Gate.';
+    assert(source !== target, 'test needs separate chat sessions');
+    await setScenario(sourceScenario);
+
+    const from = mock.log.length;
+    const release = mock.pauseNext('genre');
+    const pending = slash('/director profile');
+    let newProfile;
+    try {
+        await waitForCall('genre', from, sourceScenario);
+        await openSolo(target);
+        const next = mock.log.length;
+        newProfile = slash('/director profile');
+        await waitForCall('genre', next, targetScenario);
+        await newProfile;
+        await idle();
+        assert(await activeChat() === target && (await view()).genre?.dominant === 'fantasy', 'the target chat did not finish its profile while the source request was held');
+    } finally {
+        release();
+        await Promise.allSettled([pending, newProfile]);
+    }
+});
+
+// ---------------------------------------------------------------- saved replay
+console.log('Saved replay');
+await check('only the active swipe survives in Director records through swipes, edit, restart and deletion', async () => {
+    const id = await newSolo();
+    const original = 'Mira records the Copper Token in the Greywell Square.';
+    const alternate = 'Old Tam unfolds the Silver Ledger in the Greywell Square.';
+    const revised = 'Mira seals the Bronze Receipt in the Greywell Square.';
+    const earlier = 'Mira places the Ivory Key beneath a lantern.';
+    const playerNote = 'The player asked to keep the lantern burning.';
+    const needle = prose => prose.split(' in the Greywell')[0].replace(/\.$/, '');
+
+    const readSaved = () => ev(async () => {
+        const c = SillyTavern.getContext();
+        const response = await fetch('/api/chats/get', {
+            method: 'POST', headers: c.getRequestHeaders(),
+            body: JSON.stringify({ file_name: c.getCurrentChatId(), avatar_url: c.characters[c.characterId].avatar }),
+        });
+        if (!response.ok) throw new Error(`Saved fixture chat read failed: ${response.status}`);
+        return response.json();
+    });
+    async function waitSaved(matches) {
+        const until = Date.now() + 6500;
+        let saved;
+        while (Date.now() < until) {
+            saved = await readSaved();
+            if (matches(saved)) return saved;
+            await sleep(100);
+        }
+        throw new Error('The current Director state did not reach the saved chat');
+    }
+    function expectFacts(state, present, absent) {
+        const facts = state.canon.map(fact => fact.fact);
+        assert(facts.some(fact => fact.includes(needle(present))), `Current reply missing from replay: ${present}`);
+        for (const prose of absent) {
+            assert(!facts.some(fact => fact.includes(needle(prose))), `Stale reply survived replay: ${prose}`);
+        }
+    }
+    async function stampSwipe(value, legacyRecord = null) {
+        await ev(async ({ value, legacyRecord, playerNote }) => {
+            const c = SillyTavern.getContext();
+            const message = c.chat.at(-1);
+            const slot = message.swipe_info[message.swipe_id];
+            message.extra.fixtureThirdParty = { value };
+            slot.extra = { ...slot.extra, fixtureThirdParty: { value } };
+            if (legacyRecord) {
+                const inactive = message.swipe_info[0];
+                (legacyRecord.ops ??= []).push({ by: 'player', kind: 'note', text: playerNote, at: Date.now() });
+                inactive.extra = { ...inactive.extra, narrator: legacyRecord };
+            }
+            await c.saveChat();
+        }, { value, legacyRecord, playerNote });
+    }
+    async function moveSwipe(direction, prose) {
+        const from = mock.log.length;
+        await ev(direction => SillyTavern.getContext().swipe[direction](), direction);
+        await page.waitForFunction(prose => SillyTavern.getContext().chat.at(-1).mes === prose, prose);
+        await waitForCall('observer', from, prose);
+        await idle();
+    }
+    function expectSwipes(message, current, versions) {
+        assert(message.mes === versions[current] && message.swipe_id === current, 'Saved active selection changed');
+        assert(JSON.stringify(message.swipes) === JSON.stringify(versions), 'A saved swipe’s prose was lost or modified');
+        assert(message.swipe_info.length === versions.length, 'The saved message lost a swipe metadata slot');
+        assert(message.swipe_info.every(slot => !slot.extra?.narrator), 'Director records remain under saved swipe_info');
+        assert(message.swipe_info.every((slot, i) => slot.extra?.fixtureThirdParty?.value === ['first', 'second'][i]),
+            'Unrelated per-swipe metadata was lost or reassigned');
+        assert(message.extra.fixtureThirdParty?.value === ['first', 'second'][current], 'Unrelated active metadata was lost or reassigned');
+        assert(message.extra.narrator?.obs, 'Active observation is absent from the saved Director record');
+        assert(message.narrator_ops?.filter(op => op.by === 'player' && op.text === playerNote).length === 1,
+            'The older swipe-stored player note was lost or duplicated during migration');
+    }
+
+    mock.control.narration = earlier;
+    await send('I wait near Mira.');
+    mock.control.narration = original;
+    await send('I ask what she writes.');
+    expectFacts(await view(), original, [alternate, revised]);
+    await stampSwipe('first');
+    const legacyRecord = (await readSaved()).at(-1).extra.narrator;
+
+    mock.control.narration = alternate;
+    await moveSwipe('right', alternate);
+    expectFacts(await view(), alternate, [original, revised]);
+    await stampSwipe('second', legacyRecord);
+    assert((await readSaved()).at(-1).swipe_info[0].extra.narrator?.obs, 'This migration fixture needs a saved inactive observation');
+    await openSolo(id);
+    await idle();
+    let stored = await waitSaved(data => data.at(-1)?.mes === alternate && data.at(-1)?.extra?.narrator?.obs
+        && data.at(-1)?.swipe_info.every(slot => !slot.extra?.narrator));
+    expectSwipes(stored.at(-1), 1, [original, alternate]);
+
+    await moveSwipe('left', original);
+    expectFacts(await view(), original, [alternate, revised]);
+    stored = await waitSaved(data => data.at(-1)?.mes === original && data.at(-1)?.extra?.narrator?.obs);
+    expectSwipes(stored.at(-1), 0, [original, alternate]);
+    const keptProse = stored.slice(1, -1).map(message => message.mes);
+
+    const lastMessage = page.locator('#chat .mes').last();
+    const from = mock.log.length;
+    await lastMessage.hover();
+    await lastMessage.locator('.mes_edit').click();
+    await lastMessage.locator('.edit_textarea').fill(revised);
+    await lastMessage.locator('.mes_edit_done').click();
+    await waitForCall('observer', from, revised);
+    await idle();
+    expectFacts(await view(), revised, [original, alternate]);
+    stored = await waitSaved(data => data.at(-1)?.mes === revised && data.at(-1)?.extra?.narrator?.obs);
+    expectSwipes(stored.at(-1), 0, [revised, alternate]);
+    assert(JSON.stringify(stored.slice(1, -1).map(message => message.mes)) === JSON.stringify(keptProse), 'The edit modified earlier prose');
+
+    const avatar = await ev(() => {
+        const c = SillyTavern.getContext();
+        return c.characters[c.characterId].avatar;
+    });
+    await restart();
+    await openHost();
+    await ev(async avatar => {
+        const c = SillyTavern.getContext();
+        await c.selectCharacterById(c.characters.findIndex(character => character.avatar === avatar));
+    }, avatar);
+    await openSolo(id);
+    await idle();
+    expectFacts(await view(), revised, [original, alternate]);
+    expectSwipes((await readSaved()).at(-1), 0, [revised, alternate]);
+
+    await slash('/del 1');
+    await idle();
+    expectFacts(await view(), earlier, [original, alternate, revised]);
+    stored = await waitSaved(data => data.length === keptProse.length + 1);
+    assert(JSON.stringify(stored.slice(1).map(message => message.mes)) === JSON.stringify(keptProse), 'Deleting the selected message modified earlier prose');
+    await openSolo(id);
+    await idle();
+    expectFacts(await view(), earlier, [original, alternate, revised]);
+});
+
 // ---------------------------------------------------------------- group chat
 console.log('Group chat');
 const castCard = (name, desc, world) => JSON.stringify({ spec: 'chara_card_v3', spec_version: '3.0', data: { name, description: desc, personality: '', scenario: '', first_mes: `${name} greets you from a cast card.`, mes_example: '', alternate_greetings: [], tags: [], extensions: world ? { world } : {} } });
@@ -476,16 +1037,21 @@ await importCard(castCard('Mira', '{{char}} is a sharp-tongued well keeper.', 'M
 await importCard(castCard('Old Tam', '{{char}} is a tired ferryman.'), 'Old Tam');
 await ev(() => SillyTavern.getContext().executeSlashCommandsWithOptions('/closechat'));
 await sleep(800);
-await ev(async () => {
+const groupFixture = await ev(async () => {
     const c = SillyTavern.getContext();
     const av = (n) => c.characters.find(x => x.name === n).avatar;
     const headers = c.getRequestHeaders();
-    const r = await fetch('/api/groups/create', { method: 'POST', headers, body: JSON.stringify({ name: 'Greywell', members: [av('Mira'), av('Narrator'), av('Old Tam')], avatar_url: '', allow_self_responses: false, activation_strategy: 0, generation_mode: 0, disabled_members: [], chat_metadata: {}, fav: false, chat_id: String(Date.now()), chats: [String(Date.now())] }) });
+    const originalMutes = [av('Narrator'), av('Old Tam')];
+    const setupMutes = [av('Mira'), av('Old Tam')];
+    const name = String(Date.now());
+    const r = await fetch('/api/groups/create', { method: 'POST', headers, body: JSON.stringify({ name: 'Greywell', members: [av('Mira'), av('Narrator'), av('Old Tam')], avatar_url: '', allow_self_responses: false, activation_strategy: 0, generation_mode: 0, disabled_members: originalMutes, fav: false, chat_id: name, chats: [name] }) });
+    if (!r.ok) throw new Error(`Could not create the group fixture (HTTP ${r.status}).`);
     const group = await r.json();
     await c.getCharacters();
-    const { getGroups } = await import('/scripts/group-chats.js');
+    const { getGroups, openGroupById } = await import('/scripts/group-chats.js');
     await getGroups();
-    await c.openGroupChat?.(group.id) ?? (await import('/scripts/group-chats.js')).openGroupById(group.id);
+    await openGroupById(group.id);
+    return { id: group.id, originalMutes, setupMutes };
 });
 await sleep(2500);
 await closePopups();
@@ -500,9 +1066,9 @@ await check('fresh group chat: the narrator opens with her group greeting; cast 
 });
 await check('group setup: only the narrator is unmuted; a small cast uses join mode', async () => {
     await slash('/director setup');
-    await sleep(800);
-    const g = await ev(() => { const c = SillyTavern.getContext(); const g = c.groups.find(x => x.id === c.groupId); return { mode: g.generation_mode, muted: g.disabled_members.length }; });
-    assert(g.muted === 2 && g.mode === 2, JSON.stringify(g));
+    const saved = (await post('/api/groups/all', {})).find(g => g.id === groupFixture.id);
+    assert(saved?.generation_mode === 2, `saved group mode ${saved?.generation_mode}`);
+    assert(JSON.stringify(saved.disabled_members) === JSON.stringify(groupFixture.setupMutes), `saved mute list ${JSON.stringify(saved.disabled_members)}`);
 });
 await check('join mode: only the narrator generates, cast cards are in the prompt, and a muted member\'s lorebook fires', async () => {
     const n = narratorCalls().length;
@@ -519,11 +1085,11 @@ await check('cast profiles are derived from the cards', async () => {
     const s = await view();
     assert(s.cast.Mira?.stats?.agility === 66 && s.cast.Mira.tells?.warm, JSON.stringify(s.cast.Mira?.stats));
 });
-await check('cast-size rule: above the limit the group swaps and the director injects the cast; disabling restores join mode', async () => {
+await check('cast-size rule: above the limit the group swaps and the director injects the cast', async () => {
     await ev(() => { SillyTavern.getContext().extensionSettings.narrator_director.castLimit = 1; });
     await ev(() => SillyTavern.getContext().eventSource.emit('group_updated'));
     await sleep(1000);
-    let mode = await ev(() => { const c = SillyTavern.getContext(); return c.groups.find(x => x.id === c.groupId).generation_mode; });
+    const mode = await ev(() => { const c = SillyTavern.getContext(); return c.groups.find(x => x.id === c.groupId).generation_mode; });
     assert(mode === 0, `mode ${mode}`);
     // Presence is additive, so Old Tam leaves the scene only when it moves somewhere else.
     mock.control.narration = 'Mira leads you alone into the Mill Yard beyond the houses. Nobody else is in sight this morning.';
@@ -533,19 +1099,49 @@ await check('cast-size rule: above the limit the group swaps and the director in
     const story = storyOf(lastPrompt());
     assert(story.includes('Characters in the scene:') && story.includes('[Mira]'), `no injected cast: ${story.slice(0, 300)}`);
     assert(story.includes('Other characters (not in the scene):') && story.includes('- Old Tam: Old Tam in brief.'), 'no short profile for absent cast');
-    await slash('/director off');
-    await sleep(800);
-    mode = await ev(() => { const c = SillyTavern.getContext(); return c.groups.find(x => x.id === c.groupId).generation_mode; });
-    assert(mode === 2, `mode after disable ${mode}`);
+});
+
+await check('group Off restores the original Swap and mutes from a sibling chat after reload', async () => {
+    const originalChat = await activeChat();
+    await ev(async () => {
+        const c = SillyTavern.getContext();
+        c.extensionSettings.narrator_director.castLimit = 4;
+        await c.eventSource.emit('group_updated');
+    });
+    await page.waitForFunction(() => {
+        const c = SillyTavern.getContext();
+        return c.groups.find(g => g.id === c.groupId)?.generation_mode === 2;
+    });
+    const sibling = await ev(async id => {
+        const { createNewGroupChat } = await import('/scripts/group-chats.js');
+        await createNewGroupChat(id);
+        return SillyTavern.getContext().getCurrentChatId();
+    }, groupFixture.id);
+    assert(sibling && sibling !== originalChat, `sibling chat ${sibling}`);
+    await idle();
+    await openHost();
+    await ev(async ({ id, chat }) => {
+        const c = SillyTavern.getContext();
+        const { openGroupById, openGroupChat } = await import('/scripts/group-chats.js');
+        if (c.groupId !== id) await openGroupById(id);
+        if (c.getCurrentChatId() !== chat) await openGroupChat(id, chat);
+    }, { id: groupFixture.id, chat: sibling });
+    assert(await activeChat() === sibling, 'reopened sibling group chat');
+    await idle();
+
+    const result = await slash('/director off');
+    assert(result === 'Director off for this chat.', result);
+    const saved = (await post('/api/groups/all', {})).find(g => g.id === groupFixture.id);
+    assert(saved?.generation_mode === 0, `saved mode after disabling ${saved?.generation_mode}`);
+    assert(JSON.stringify(saved.disabled_members) === JSON.stringify(groupFixture.originalMutes), `restored mutes ${JSON.stringify(saved.disabled_members)}`);
+    assert(!saved.narrator_director, 'restored group still has a Director baseline');
+    assert(saved.chat_id === sibling && saved.chats.includes(originalChat), 'group chat identity or history changed during restore');
 });
 
 await check('no page errors from the extension', async () => assert(pageErrors.length === 0, pageErrors.join(' | ')));
 
 // ---------------------------------------------------------------- done
-await browser.close();
-server.kill();
-mock.server.close();
-rmSync(dataRoot, { recursive: true, force: true });
+await close();
 const failed = results.filter(r => !r[0]);
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
 process.exit(failed.length ? 1 : 0);

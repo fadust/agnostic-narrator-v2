@@ -1,6 +1,7 @@
 // The brief is composed in code from replayed state. It carries the current beat's intent, never the queue.
 
 import { CAPS } from './enums.js';
+import { beatText } from './beat.js';
 import { castLine, comparisons, detectAttempt, detectExchange, pcLine } from './social.js';
 import { chapters } from './spine.js';
 import { wantOf } from './agenda.js';
@@ -92,7 +93,7 @@ export function buildBrief(state, opts = {}) {
     if (beat) {
         offered.beat = beat.id;
         // The opening the world offers (the beat's pressure), never its goal. Beats stored before W1 have only intent.
-        const opening = beat.pressure || beat.goal || beat.intent;
+        const opening = beatText(beat).pressure;
         L.scene_intent = beat.precondition ? `${opening} (only if: ${beat.precondition})` : opening;
         // Patience: after N replies untouched, the narrator is told once that the opening is still there. Never pressed.
         const nudge = Number(state.meta.nudgeAfter ?? 3);
@@ -219,29 +220,50 @@ export function buildStoryBlock(state, opts = {}) {
     // memory and feeds the narrator) sends only the last 2 turns' summaries; 'off' sends none.
     const { cast = [], firstIncluded = 0, tokenCap = 1200, memory = 'director', unsummarised = null, loreNames = [] } = opts;
     const parts = [];
-    if (state.premise) parts.push(`Premise: ${state.premise}`);
+    const start = '<story_context>\n', end = '\n</story_context>';
+    let left = Math.max(0, Math.floor(Number(tokenCap) || 0)) - roughTokens(start + end);
+    let overflow = false;
+    // Count separators and the wrapper too. Add one complete block or a deliberately shorter version.
+    const add = (full, short = '') => {
+        const cost = text => roughTokens((parts.length ? '\n\n' : '') + text);
+        const text = cost(full) <= left ? full : short;
+        if (text !== full) overflow = true;
+        if (!text || cost(text) > left) return;
+        parts.push(text);
+        left -= cost(text);
+    };
+    const g = state.genre;
+    if (g) {
+        const stance = g.pg ? 'PG. No explicit sex, no graphic gore, no slurs; danger and death are real but not dwelt on'
+            : g.explicit ? 'Mature. This story allows explicit sexual content between adults.'
+                : 'Mature. Keep intimacy at the closed door.';
+        add(`Rating: ${stance}`);
+    }
+    const undone = state.tombstones.slice(-5).map(t => `- ${t.fact}`);
+    if (undone.length) add(`Disregard, these did not happen:\n${undone.join('\n')}`, `Disregard: ${undone.at(-1).slice(2)}`);
+    const present = new Set(state.scene.present);
+    const isHere = c => (c.people ?? [c.name]).some(n => present.has(n));
+    const here = cast.filter(isHere);
+    if (here.length) {
+        const full = `Characters in the scene:\n${here.map(c => c.full).join('\n\n')}`;
+        const shorts = `Characters in the scene:\n${here.map(c => `- ${c.name}: ${String(c.short ?? '').slice(0, 160)}`).join('\n')}`;
+        if (roughTokens(full) <= left * 0.65) add(full, shorts);
+        else {
+            overflow = true;
+            add(shorts, `Characters in the scene: ${here.map(c => c.name).join(', ')}`);
+        }
+    }
+    if (state.premise) add(`Premise: ${state.premise}`);
     if (state.genre) {
-        const g = state.genre;
         const bits = [
             g.dominant && `genre: ${[g.dominant, ...arr(g.secondary)].join(' / ')}`,
             g.register && `register: ${g.register}`, g.pov && `point of view: ${g.pov}`, g.tempo && `tempo: ${g.tempo}`,
             g.stakes && `stakes: ${g.stakes}`, g.lethality && `lethality: ${g.lethality}`,
-            g.explicit && 'explicit sexual content between adults is part of this story',
-            g.pg && 'rating: PG. No explicit sex, no graphic gore, no slurs; danger and death are real but not dwelt on',
             arr(g.priority).length && `when goals conflict, protect in this order: ${g.priority.join(' > ')}`,
             arr(g.promises).length && `promises to keep: ${g.promises.join('; ')}`,
             arr(g.avoid).length && `avoid: ${g.avoid.join('; ')}`,
         ].filter(Boolean);
-        if (bits.length) parts.push(`Story profile:\n${bits.map(b => `- ${b}`).join('\n')}`);
-    }
-    if (cast.length) {
-        const present = new Set(state.scene.present);
-        // A card is in the scene when any of the people it holds is.
-        const isHere = (c) => (c.people ?? [c.name]).some(n => present.has(n));
-        const here = cast.filter(isHere).map(c => c.full);
-        const away = cast.filter(c => !isHere(c)).map(c => `- ${c.name}: ${c.short}`);
-        if (here.length) parts.push(`Characters in the scene:\n${here.join('\n\n')}`);
-        if (away.length) parts.push(`Other characters (not in the scene):\n${away.join('\n')}`);
+        if (bits.length) add(`Story profile:\n${bits.map(b => `- ${b}`).join('\n')}`, `Story profile: ${bits[0]}`);
     }
     // Appearance anchors: how those in the scene, and the player character, look. Sent while they are present,
     // so descriptions do not drift from reply to reply.
@@ -252,13 +274,11 @@ export function buildStoryBlock(state, opts = {}) {
             const who = [c.gender, c.race, c.age_group].filter(Boolean).join(', ');
             return `- ${n}${who ? ` (${who})` : ''}${c.appearance ? `: ${c.appearance}` : ''}`;
         });
-    if (looks.length) parts.push(`How they look (keep it consistent):\n${looks.join('\n')}`);
-    // Names already taken (M3), made in code: so a new character never gets a name, or a first name, already in use.
-    const taken = takenNames(state, loreNames);
-    if (taken.length) parts.push(`Names already in use (never give a new character any of these names or first names): ${taken.join(', ')}`);
+    if (looks.length) add(`How they look (keep it consistent):\n${looks.join('\n')}`);
     // Concluded milestones only: how each stage of the story turned out. Milestones in progress are never sent.
     const done = memory === 'director' ? chapters(state) : [];
-    if (done.length) parts.push(`Chapters so far:\n${done.map(c => `- ${c.title}: ${c.conclusion}`).join('\n')}`);
+    if (done.length) add(`Chapters so far:\n${done.map(c => `- ${c.title}: ${c.conclusion}`).join('\n')}`,
+        `Latest chapter: ${done.at(-1).title}: ${done.at(-1).conclusion}`);
     // Summaries cover only what has left the prompt, so nothing is told twice.
     // A message hidden by the player has left the prompt too.
     const gone = memory === 'director' ? state.summaries.recent.filter(s => s.i < firstIncluded || s.hidden).map(s => s.text) : [];
@@ -268,16 +288,13 @@ export function buildStoryBlock(state, opts = {}) {
     // `unsummarised`: chat indices of replies that extension has no summary for. Unknown (null): all of the last 2.
     const pending = Array.isArray(unsummarised) ? new Set(unsummarised.map(Number)) : null;
     const latest = memory === 'extension' ? state.summaries.recent.slice(-2).filter(s => !pending || pending.has(s.i)).map(s => s.text).filter(Boolean) : [];
-    if (latest.length) parts.push(`The last turns, in brief:\n${latest.map(t => `- ${t}`).join('\n')}`);
-    if (story.length) {
-        parts.push(`The story so far:\n${story.join('\n')}`);
-        // Summaries are not rewritten after a retcon; the correction rides with them instead.
-        const undone = state.tombstones.slice(-5).map(t => `- ${t.fact}`);
-        if (undone.length) parts.push(`Disregard, these did not happen:\n${undone.join('\n')}`);
-    }
-    if (!parts.length) return { text: '', overflow: false };
-    let text = `<story_context>\n${parts.join('\n\n')}\n</story_context>`;
-    const overflow = roughTokens(text) > tokenCap;
+    if (latest.length) add(`The last turns, in brief:\n${latest.map(t => `- ${t}`).join('\n')}`);
+    if (story.length) add(`The story so far:\n${story.join('\n')}`, `Recent history:\n${story.slice(-2).join('\n')}`);
+    const taken = takenNames(state, loreNames);
+    if (taken.length) add(`Names already in use (never give a new character any of these names or first names): ${taken.join(', ')}`);
+    const away = cast.filter(c => !isHere(c));
+    if (away.length) add(`Other characters (not in the scene):\n${away.map(c => `- ${c.name}: ${c.short}`).join('\n')}`);
+    const text = parts.length ? start + parts.join('\n\n') + end : '';
     return { text, overflow, tokens: roughTokens(text) };
 }
 

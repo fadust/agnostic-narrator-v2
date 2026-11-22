@@ -1,6 +1,6 @@
 // Memory connectors: where the planner reads the story so far when another extension owns memory (settings.memory
 // 'extension'). Each connector says whether its extension is there and returns { text, missing?, source }.
-// Other extensions may add their own with narratorDirector.registerMemoryProvider({ id, name, available, story }).
+// Other extensions may register { id, name, available, story, gaps? }. Only gaps() must be synchronous.
 
 const ctx = () => SillyTavern.getContext();
 
@@ -20,14 +20,16 @@ export function registerMemoryProvider(p) {
 
 // BaiBai Book: its layered record (L0 summaries of each reply, merged upwards into L1, L2, L3), chosen by BaiBai's own
 // rule: the highest level that fully covers each stretch. coverage.missingAiFloors lists replies with no valid summary.
+const baiBaiMissing = h => Array.isArray(h?.coverage?.missingAiFloors) ? h.coverage.missingAiFloors : null;
 registerMemoryProvider({
     id: 'baibai',
     name: 'BaiBai Book',
     available: () => typeof globalThis.STBaiBaiBook?.getHistory === 'function',
     story() {
         const h = globalThis.STBaiBaiBook.getHistory({});
-        return { text: String(h?.text ?? ''), missing: Array.isArray(h?.coverage?.missingAiFloors) ? h.coverage.missingAiFloors : [], source: 'BaiBai Book' };
+        return { text: String(h?.text ?? ''), missing: baiBaiMissing(h), source: 'BaiBai Book' };
     },
+    gaps: () => baiBaiMissing(globalThis.STBaiBaiBook.getHistory({})),
 });
 
 // SillyTavern's built-in Summarize extension.
@@ -40,15 +42,13 @@ registerMemoryProvider({
 
 /**
  * Chat indices of replies the memory extension has no summary for, or null when it cannot tell. Synchronous: it is
- * read while the narrator's prompt is built. Only BaiBai Book reports this (coverage.missingAiFloors).
+ * read while the narrator's prompt is built. An empty array means all replies are covered.
  * @param {{memoryProvider?: string}} settings
  */
 export function memoryGaps(settings) {
-    const choice = settings.memoryProvider || 'auto';
-    const bb = providers.get('baibai');
-    if (!(choice === 'auto' || choice === 'baibai') || !bb?.available()) return null;
     try {
-        const missing = globalThis.STBaiBaiBook.getHistory({})?.coverage?.missingAiFloors;
+        const missing = availableProviders(settings).next().value?.gaps?.();
+        if (typeof missing?.catch === 'function') missing.catch(() => {});
         return Array.isArray(missing) ? missing : null;
     } catch {
         return null;
@@ -57,6 +57,14 @@ export function memoryGaps(settings) {
 
 /** Connector choices for the settings panel: [value, label]. */
 export const providerOptions = () => [['auto', 'Automatic'], ...[...providers.values()].map(p => [p.id, p.name]), ['macro', 'A macro, named below']];
+
+function* availableProviders(settings) {
+    const choice = settings.memoryProvider || 'auto';
+    const list = choice === 'auto' ? providers.values() : [providers.get(choice)];
+    for (const provider of list) {
+        try { if (provider?.available()) yield provider; } catch { /* provider unavailable */ }
+    }
+}
 
 /**
  * The record from the chosen connector. 'auto' takes the first available one. 'macro' reads {{name}}.
@@ -69,13 +77,11 @@ export async function memoryStory(settings) {
         const text = name ? macroText(name) : '';
         return text ? { text, source: `{{${name}}}` } : null;
     }
-    const list = choice === 'auto' ? [...providers.values()] : [providers.get(choice)].filter(Boolean);
-    for (const p of list) {
-        if (!p.available()) continue;
-        const r = await p.story();
-        if (r?.text) return r;
+    for (const provider of availableProviders(settings)) {
+        const record = await provider.story();
+        if (record?.text) return record;
         // Present but nothing summarised yet (BaiBai writes a reply's summary only after the next reply).
-        if (r) return { ...r, text: '', empty: true };
+        if (record) return { ...record, text: '', empty: true };
     }
     return null;
 }

@@ -9,7 +9,7 @@ All commands begin with `/director`. Anything that is not a keyword is a free-te
 | `/director <text>` | A direction. It reaches the planner, and the narrator once as `player_request` |
 | `/director inspect` | Open the inspector. `/director` alone does the same |
 | `/director on` | Turn the director back on for a Narrator chat after `/director off`. Has no effect without the Narrator card |
-| `/director off` | Turn the director off for this chat and return a group to a join mode |
+| `/director off` | Turn the director off for this chat and restore the group mode and mute settings it changed |
 | `/director setup` | In a group: mute the cast and apply the cast-size rule |
 | `/director scene: location=…; time=…; mood=…; present=A, B` | Change the scene. Any subset of fields. Values end at a comma or semicolon; for a value with a comma, use the inspector's Scene tab |
 | `/director beats: one; two` | Queue beats ahead of the plan, separated by semicolons |
@@ -64,7 +64,7 @@ Under **Extensions → Narrator Director**.
 | Mentions before a lore entry | 2 | Accepted replies that must mention a person, place or thing |
 | Keep lorebook files for the director's lore | On | Writes `Narrator baseline` (or `Narrator baseline (director)` when you already have a file of that name) and `Narrator dynamic lore` so other extensions can look entries up |
 | Notes | 300 | Token cap. Lines are dropped, least important first, to fit |
-| Block before the chat history | 1200 | Token cap for premise, sent cast and summaries. Going over is reported on the Now tab |
+| Block before the chat history | 1200 | Estimated token cap for story context. The Now tab reports when context was shortened to fit |
 
 Every setting the extension reads has a control in this panel, and each control's explanation is printed beside it. There are no settings reachable only by editing a file.
 
@@ -149,7 +149,7 @@ Never mirrored: beats, clues, the arc, beliefs, canon.
 | --- | --- |
 | A message's stable id | `message.narrator_id` |
 | Player and setup operations | `message.narrator_ops` |
-| The observer's reading of a reply, and director operations resting on it | `message.extra.narrator` (one per swipe) |
+| The observer's reading of the active reply and Director operations based on it | `message.extra.narrator`. Saved inactive swipes retain their prose and other extensions' metadata |
 | Story profile and premise at chat start | `chat_metadata.narrator_director.setup` |
 | Public variables | `chat_metadata.variables` |
 | Extension settings | `extension_settings.narrator_director` |

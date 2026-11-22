@@ -262,7 +262,7 @@ test('summaries are injected only for messages that left the prompt, and roll-up
     director.sync();
     s = director.view();
     assert.equal(s.summaries.rolled, '', 'the roll-up covered a deleted message');
-    assert.ok(s.meta.staleRollup);
+    assert.ok(!chat.some(m => [...(m.narrator_ops ?? []), ...(m.extra?.narrator?.ops ?? [])].some(op => op.kind === 'rollup')));
 });
 
 test('hidden messages keep their committed record; other characters\' greetings are never read', async () => {
@@ -480,7 +480,7 @@ test('appearance is an anchor: taken from the card once, kept over a re-profile,
     assert.equal(validateProfile({ summary: 'x', age_group: 'teen' }).value.age_group, 'teen');
 });
 
-test('swiping back to an older swipe keeps the message id and the player\'s operations', async () => {
+test('swiping back rereads the active reply and keeps the message id and player operations', async () => {
     const chat = [narr('The story opens at the gate.'), user('go'), narr('Swipe one: a red banner hangs over the gate.')];
     const { director } = makeHost(chat);
     await director.kick();
@@ -495,7 +495,9 @@ test('swiping back to an older swipe keeps the message id and the player\'s oper
     const s = director.view();
     assert.equal(chat[2].narrator_id, id);
     assert.equal(s.scene.mood, 'festive', 'the edit survived the swipe back');
-    assert.ok(facts(s).some(f => f.includes('red banner')), 'the restored reading is reused without a new call');
+    assert.ok(!facts(s).some(f => f.includes('red banner') || f.includes('blue banner')));
+    await director.kick();
+    assert.ok(facts(director.view()).some(f => f.includes('red banner')), 'the active reply was read again');
 });
 
 test('records written in the earlier layout are migrated without loss or duplication', () => {

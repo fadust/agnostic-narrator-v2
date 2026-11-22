@@ -18,6 +18,7 @@ import {
 } from './enums.js';
 import { applyPlanSpine, applySpineDelta, applySpineOp, mergeSpineEdit, sceneKey, trackPart } from './spine.js';
 import { applyAgendaOp, applyPlanAgendas, renameAgenda } from './agenda.js';
+import { beatText } from './beat.js';
 import { looksLikeName, stripDirector, stripTags } from './text.js';
 import { arr, clamp, clone, hash, isObj, nameKey, setPath, similarity, uuid } from './util.js';
 
@@ -103,10 +104,65 @@ export function factsInView(state, majors = 40) {
     return live.filter(f => keep.has(f));
 }
 
-export const visibleText = (m, narrator = null) => stripTags(stripDirector(m?.mes ?? ''), narrator?.strip);
+const textCache = new WeakMap();
+function reading(message, strip) {
+    const raw = String(message?.mes ?? '');
+    const key = arr(strip).join('\u0000');
+    if (!message) return { text: '', hash: hash('') };
+    let cached = textCache.get(message);
+    if (cached?.raw !== raw) {
+        cached = { raw, digest: hash(raw), plain: stripDirector(raw), variants: new Map() };
+        textCache.set(message, cached);
+    }
+    if (!cached.variants.has(key)) {
+        if (cached.variants.size >= 8) cached.variants.clear();
+        const text = stripTags(cached.plain, strip);
+        cached.variants.set(key, { text, hash: hash(text), rawHash: cached.digest });
+    }
+    return cached.variants.get(key);
+}
+
+export const visibleText = (m, narrator = null) => reading(m, narrator?.strip).text;
+export const rawTextHash = (m) => reading(m).rawHash;
 
 /** Strip lists used by earlier versions, for records that do not say which list they were read with. */
 const LEGACY_STRIP = [['bbs_start', 'bbs_end', 'bbi_image']];
+
+function replyKey(message, narrator) {
+    const strip = message.narrator_revision?.strip ?? narrator?.strip;
+    const digest = message.is_user ? rawTextHash(message) : reading(message, strip).hash;
+    return `${message.swipe_id ?? 0}:${digest}`;
+}
+
+export function activeRevision(message, narrator) {
+    const key = replyKey(message, narrator);
+    return message.narrator_revision?.key === key ? message.narrator_revision.id : key;
+}
+
+function storyFingerprints(chat, narrator, through) {
+    const revisions = new Map();
+    let prefix = '';
+    for (const message of chat) {
+        const kind = classify(message, narrator);
+        if (kind === 'narration' || kind === 'user') {
+            prefix = hash(`${prefix}|${message.narrator_id}:${activeRevision(message, narrator)}`);
+        }
+        if (message.narrator_id) revisions.set(message.narrator_id, prefix);
+        if (message === through) break;
+    }
+    return revisions;
+}
+
+/** Fingerprint of the story inputs through a stable anchor. Later messages do not invalidate it. */
+export function storyBasis(chat, narrator, through = chat.at(-1)) {
+    const mid = through?.narrator_id;
+    if (!mid) return undefined;
+    return { mid, fingerprint: storyFingerprints(chat, narrator, through).get(mid) };
+}
+
+function validBasis(op, fingerprints) {
+    return !op.basis || fingerprints.get(op.basis.mid) === op.basis.fingerprint;
+}
 
 /**
  * Hashes a record may carry for this reply: the text as read now; with no tags stripped; with the tags its own records
@@ -122,27 +178,36 @@ export const textHashes = (m, narrator = null) => {
         const key = list.join(',');
         if (seen.has(key)) continue;
         seen.add(key);
-        const h = hash(visibleText(m, { strip: list }));
+        const h = reading(m, list).hash;
         if (!out.includes(h)) out.push(h);
     }
     return out;
 };
 
 /** One pass over the chat: classification, text hash and record state for every message. */
-export function scan(chat, narrator) {
+export function scan(chat, narrator, fingerprints = storyFingerprints(chat, narrator)) {
+    let player = null;
     const entries = chat.map((m, i) => {
         const kind = classify(m, narrator);
-        const rec = isObj(m.extra?.narrator) ? m.extra.narrator : null;
-        const text = kind === 'narration' ? visibleText(m, narrator) : '';
-        const h = kind === 'narration' ? hash(text) : '';
+        const revision = activeRevision(m, narrator);
+        const rec = isObj(m.extra?.narrator) && (!m.narrator_revision || m.narrator_revision.id === revision) ? m.extra.narrator : null;
+        const read = kind === 'narration' ? reading(m, narrator?.strip) : null;
+        const text = read?.text ?? '';
+        const h = read?.hash ?? '';
         const hashes = kind === 'narration' ? textHashes(m, narrator) : [];
-        const ops = [...arr(m.narrator_ops), ...arr(rec?.ops)].sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
-        return {
-            i, m, kind, rec, ops, text, hash: h, hashes, mid: typeof m.narrator_id === 'string' ? m.narrator_id : null,
+        const ops = [...arr(m.narrator_ops), ...arr(rec?.ops)].filter(op => validBasis(op, fingerprints))
+            .sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
+        const entry = {
+            i, m, kind, rec, ops, text, hash: h, hashes, revision, mid: typeof m.narrator_id === 'string' ? m.narrator_id : null,
             hidden: m.is_system === true,
-            valid: kind === 'narration' && !!rec?.obs && hashes.includes(rec.obs.hash),
-            tracked: false, trackPart: undefined,
+            valid: kind === 'narration' && !!rec?.obs && hashes.includes(rec.obs.hash) && (!rec.obs.revision || rec.obs.revision === revision)
+                && (!rec.obs.player || (rec.obs.player.mid === (player?.narrator_id ?? null)
+                    && rec.obs.player.revision === (player ? activeRevision(player, narrator) : null))),
+            player,
+            tracked: false, trackPart: undefined, trackValid: false,
         };
+        if (m.is_user) player = m;
+        return entry;
     });
     // The spine tracker reads replies in batches. A batch is stored on its last reply with the replies it covers,
     // and stands only while every one of them is unchanged. Each reply then gets its own share of the findings.
@@ -153,9 +218,11 @@ export function scan(chat, narrator) {
         const batchStrip = e.rec?.track?.strip;
         const matches = (c) => {
             const t = byMid.get(c.mid);
-            return !!t && (t.hashes.includes(c.hash) || (Array.isArray(batchStrip) && hash(visibleText(t.m, { strip: batchStrip })) === c.hash));
+            return !!t && (!c.revision || c.revision === t.revision)
+                && (t.hashes.includes(c.hash) || (Array.isArray(batchStrip) && reading(t.m, batchStrip).hash === c.hash));
         };
-        if (!covers.length || !covers.every(matches)) continue;
+        if (!covers.length || !covers.every(matches) || !validBasis(e.rec.track, fingerprints)) continue;
+        e.trackValid = true;
         covers.forEach((c, n) => Object.assign(byMid.get(c.mid), { tracked: true, trackPart: trackPart(e.rec.track.delta, n + 1, covers.length) }));
     }
     let lastStory = -1;
@@ -164,7 +231,7 @@ export function scan(chat, narrator) {
     return entries;
 }
 
-const sameOp = (a, b) => a.at === b.at && a.kind === b.kind;
+const sameOp = (a, b) => a.at === b.at && a.kind === b.kind && JSON.stringify(a) === JSON.stringify(b);
 
 /**
  * Bring the chat's records in line with its text. Mutates the messages only.
@@ -179,7 +246,8 @@ export function reconcile(chat, narrator, knownMids = null) {
     let changed = false;
     const stale = [];
     const seen = new Set();
-    for (const m of chat) {
+    let firstChanged = Infinity;
+    for (const [index, m] of chat.entries()) {
         if (!isObj(m.extra)) m.extra = {};
         let rec = m.extra.narrator;
         if (!isObj(rec)) { rec = m.extra.narrator = { v: RECORD_VERSION }; changed = true; }
@@ -192,6 +260,7 @@ export function reconcile(chat, narrator, knownMids = null) {
             m.narrator_id = uuid();
             delete m.narrator_ops;
             rec = m.extra.narrator = { v: RECORD_VERSION };
+            delete m.narrator_revision;
             changed = true;
         }
         seen.add(m.narrator_id);
@@ -204,16 +273,71 @@ export function reconcile(chat, narrator, knownMids = null) {
             changed = true;
         }
         if (rec.ops && !rec.ops.length) { delete rec.ops; changed = true; }
-        if (rec.obs && classify(m, narrator) === 'narration' && !textHashes(m, narrator).includes(rec.obs.hash)) {
+        const kind = classify(m, narrator);
+        const key = replyKey(m, narrator);
+        const prior = m.narrator_revision;
+        const activeChanged = prior && prior.key !== key;
+        if ((kind === 'user' || kind === 'narration' || prior) && prior?.key !== key) {
+            m.narrator_revision = { key, id: uuid(), strip: prior?.strip ?? arr(narrator?.strip) };
+            changed = true;
+        }
+        // Keep the host's swipe text and other extensions' data; current Director data lives in message.extra.
+        for (const info of arr(m.swipe_info)) {
+            if (!isObj(info?.extra?.narrator)) continue;
+            for (const op of arr(info.extra.narrator.ops)) if (op.by === 'player') {
+                const own = (m.narrator_ops ??= []);
+                if (!own.some(o => sameOp(o, op))) own.push(op);
+            }
+            if (info.extra === m.extra) info.extra = { ...info.extra };
+            delete info.extra.narrator;
+            changed = true;
+        }
+        if (activeChanged || (rec.obs && kind === 'narration' && !textHashes(m, narrator).includes(rec.obs.hash))) {
             delete rec.obs;
             delete rec.ops;
-            stale.push(m.narrator_id);
+            delete rec.track;
+            delete rec.err;
+            delete rec.trackErr;
+            if (kind === 'narration') stale.push(m.narrator_id);
+            firstChanged = Math.min(firstChanged, index);
             changed = true;
         }
     }
     const mids = chat.map(m => m.narrator_id);
     const deleted = knownMids ? knownMids.filter(id => !seen.has(id)) : [];
+    if (deleted.length) firstChanged = Math.min(firstChanged, knownMids.indexOf(deleted[0]));
+    const reordered = knownMids?.some((id, i) => id !== mids[i]);
+    if (!knownMids || firstChanged !== Infinity || reordered) {
+        const fingerprints = storyFingerprints(chat, narrator);
+        for (const entry of scan(chat, narrator, fingerprints)) {
+            const { m, rec, i, trackValid } = entry;
+            if (rec?.obs && entry.kind === 'narration' && !entry.valid) {
+                delete rec.obs;
+                delete rec.err;
+                stale.push(m.narrator_id);
+                changed = true;
+            }
+            if (rec?.track && !trackValid) { delete rec.track; delete rec.trackErr; changed = true; }
+            const valid = op => validBasis(op, fingerprints) && (op.basis || i < firstChanged || !legacyDerived(op));
+            for (const owner of [m, rec].filter(Boolean)) {
+                const prop = owner === m ? 'narrator_ops' : 'ops';
+                if (!Array.isArray(owner[prop])) continue;
+                const keep = owner[prop].filter(valid);
+                if (keep.length !== owner[prop].length) {
+                    if (keep.length) owner[prop] = keep;
+                    else delete owner[prop];
+                    changed = true;
+                }
+            }
+        }
+    }
     return { changed, stale, deleted, mids };
+}
+
+function legacyDerived(op) {
+    return ['arc', 'plan', 'spine', 'conclusion', 'agendas', 'rollup', 'facts-clean'].includes(op.kind)
+        || (op.kind === 'profile' && (op.story || op.lore))
+        || (op.kind === 'edit' && op.replace && op.path === 'spine');
 }
 
 // ---------------------------------------------------------------- cast helpers
@@ -307,7 +431,7 @@ export function applyDelta(state, obs, entry) {
     const d = obs.delta;
     const mid = entry.mid;
     const turn = state.meta.turn;
-    const tag = mid.slice(0, 8);
+    const tag = obs.revision ? `${mid.slice(0, 8)}${obs.revision.slice(0, 8)}` : mid.slice(0, 8);
     const player = state.meta.player;
     const placeBefore = state.scene.location.established ? nameKey(state.scene.location.value) : null;
     const gone = new Set(arr(d.cast_changes).filter(c => c.change === 'departed' || c.change === 'dead').map(c => c.who));
@@ -537,10 +661,8 @@ export function applyDelta(state, obs, entry) {
  * existed has only `intent`: it serves as both.
  */
 function sanitiseBeat(b, id) {
-    const text = (v) => (typeof v === 'string' ? v.trim() : '');
-    const goal = text(b.goal) || text(b.intent);
     return {
-        id, scene: b.scene ?? '', goal, pressure: text(b.pressure) || goal, intent: goal, precondition: b.precondition ?? '', type: b.type ?? 'pressure',
+        id, scene: b.scene ?? '', ...beatText(b), precondition: b.precondition ?? '', type: b.type ?? 'pressure',
         required: !!b.required, status: 'queued', lore: arr(b.lore).slice(0, 3), serves: typeof b.serves === 'string' ? b.serves : '', plants: Number.isInteger(b.plants) ? b.plants : 0,
         clues: arr(b.clues).slice(0, CAPS.clues).map((c, n) => ({
             id: `${id}-c${n}`, text: c.text ?? '', route: c.route ?? 'place', where: c.where ?? '', found: false,
@@ -550,7 +672,7 @@ function sanitiseBeat(b, id) {
 
 export function applyOp(state, op, entry, chatMids) {
     const turn = state.meta.turn;
-    const tag = entry.mid.slice(0, 6);
+    const tag = entry.mid.slice(0, 6) + (op.basis?.fingerprint.slice(0, 8) ?? '');
     if (applySpineOp(state, op, entry)) return;
     if (applyAgendaOp(state, op)) return;
     switch (op.kind) {
@@ -639,14 +761,18 @@ export function applyOp(state, op, entry, chatMids) {
         }
         case 'retcon': {
             const ids = new Set(arr(op.ids));
+            const texts = arr(op.texts);
             for (const bucket of ['canon', 'uncertain']) {
                 state[bucket] = state[bucket].filter(f => {
-                    if (!ids.has(f.id)) return true;
+                    if (!ids.has(f.id) && !texts.some(text => similarity(text, f.fact) >= 0.85)) return true;
+                    ids.add(f.id);
                     state.tombstones.push({ fact: f.fact, source: f.source, turn });
                     return false;
                 });
             }
-            for (const t of arr(op.texts)) state.tombstones.push({ fact: t, source: entry.mid, turn });
+            for (const t of texts) if (!state.tombstones.some(record => record.fact === t)) {
+                state.tombstones.push({ fact: t, source: entry.mid, turn });
+            }
             for (const c of Object.values(state.cast)) c.knows = c.knows.filter(k => !ids.has(k.fact));
             state.lore_drafts = state.lore_drafts.filter(l => !state.tombstones.some(t => similarity(t.fact, l.text) >= 0.7));
             break;
@@ -674,6 +800,30 @@ export function applyOp(state, op, entry, chatMids) {
             // The player renames or removes a cast member. Who counts as a character is the player's call;
             // the observer's guess at it is only a first draft.
             const name = String(op.name ?? '');
+            if (op.action === 'edit') {
+                if (!Object.hasOwn(state.cast, name)) break;
+                const person = state.cast[name];
+                for (const [field, value] of arr(op.fields)) {
+                    if (field.startsWith('stats.')) {
+                        person.stats ??= Object.fromEntries(STATS.map(stat => [stat, STAT_BASELINE]));
+                        person.statsByPlayer = true;
+                    }
+                    if (field === 'beliefs') person.beliefs = [...person.beliefs.filter(b => b.true), ...clone(value)];
+                    else setPath(person, field, clone(value));
+                }
+                if (Array.isArray(op.wants) && !state.cast[name].pc) {
+                    const cleared = new Set(state.meta.clearedAgendas ?? []);
+                    if (op.wants.length) {
+                        state.agendas[name] = { wants: [...op.wants], since: turn, by: 'player' };
+                        cleared.delete(name);
+                    } else {
+                        delete state.agendas[name];
+                        cleared.add(name);
+                    }
+                    state.meta.clearedAgendas = [...cleared];
+                }
+                break;
+            }
             const to = String(op.to ?? '').trim();
             const swap = (n) => (n === name ? to : n);
             if (!name || state.cast[name]?.pc) break;
@@ -699,6 +849,29 @@ export function applyOp(state, op, entry, chatMids) {
             break;
         }
         case 'note': state.notes.push({ kind: 'operation', text: String(op.text ?? ''), turn }); break;
+        case 'scene-presence': {
+            const present = new Set(state.scene.present);
+            for (const name of arr(op.remove)) present.delete(name);
+            for (const name of arr(op.add)) present.add(name);
+            state.scene.present = [...present];
+            break;
+        }
+        case 'fact-secret': {
+            const fact = state.canon.find(f => f.id === op.id);
+            if (fact) fact.secret = !!op.secret;
+            break;
+        }
+        case 'fact-review': {
+            const index = state.uncertain.findIndex(f => f.id === op.id);
+            if (index < 0) break;
+            const [fact] = state.uncertain.splice(index, 1);
+            if (op.confirm) state.canon.push(fact);
+            break;
+        }
+        case 'thread-review':
+            state.threads = op.resolve ? state.threads.map(t => t.id === op.id ? { ...t, status: 'resolved' } : t)
+                : state.threads.filter(t => t.id !== op.id);
+            break;
         // A bare re-plan is an instruction to the planner only: `quiet` keeps it out of the narrator's notes, which must
         // never reveal that a plan exists (found live, 18 Nov 2026).
         case 'settle': addSettled(state, { text: op.text, by: 'player', source: entry.mid, turn }); break;
@@ -756,14 +929,13 @@ export function applyOp(state, op, entry, chatMids) {
  * @param {boolean} [opts.includeProvisional=true] Include the latest, not-yet-accepted reply.
  * @param {number} [opts.upto] Stop before this chat index (state as it was before that message).
  */
-export function replay(chat, ctx, opts = {}) {
+export function replay(chat, ctx, opts = {}, entries = scan(chat, ctx.narrator)) {
     const { includeProvisional = true, upto = Infinity } = opts;
     const state = initialState(ctx.setup);
     // Patience settings travel with the context, so retirement and the nudge follow them on every replay.
     state.meta.nudgeAfter = Number(ctx.patience?.nudge ?? 3);
     state.meta.stallAfter = Number(ctx.patience?.stall ?? 5);
     state.meta.dormantAfter = Number(ctx.patience?.dormant ?? 12);
-    const entries = scan(chat, ctx.narrator);
     const chatMids = new Set(entries.map(e => e.mid));
     if (state.meta.player) ensureCast(state, state.meta.player).pc = true;
 

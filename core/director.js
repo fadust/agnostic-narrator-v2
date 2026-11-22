@@ -7,7 +7,7 @@ import { memoryMode, plannerMemory } from './memory.js';
 import { applyRating, planTrigger, queuedBeatText, validateArc, validateConclusion, validateGenre, validatePlan, validateProfile, validateSpine, validateSpineRewrites } from './planner.js';
 import { arcPrompt, cleanupPrompt, conclusionPrompt, genrePrompt, observerPrompt, planPrompt, profilePrompt, spineCheckPrompt, spinePrompt, summariserPrompt, trackCheckPrompt, trackerPrompt } from './prompts.js';
 import { applySpineRewrites, emptySpine, findCriterion, flagSpine, needsConclusion, spineIds, spineTrigger } from './spine.js';
-import { castPeople, ensureCast, logOp, playerSettled, reconcile, replay, scan, visibleText } from './state.js';
+import { activeRevision, castPeople, ensureCast, logOp, playerSettled, rawTextHash, reconcile, replay, scan, storyBasis, visibleText } from './state.js';
 import { aroundQuote, applyTrackCheck, validateCleanup, validateObservation, validateTrackCheck, validateTracking } from './validate.js';
 import { arr, hash, roughTokens, str } from './util.js';
 import { planCheckContext, reviewPlan, validatePlanRewrites } from './plancheck.js';
@@ -115,13 +115,14 @@ function planSeqOn(message) {
     return arr(message?.extra?.narrator?.ops).filter(o => o.kind === 'plan').reduce((n, o) => Math.max(n, (Number(o.seq) || 0) + 1), 0);
 }
 
-/** A cheap print of the chat for the replay cache: what replay reads, without hashing every message's text. */
+/** A print of the chat for the replay cache. Message text hashes are reused until the text actually changes. */
 function chatPrint(chat) {
     let out = `${chat.length}`;
     for (const m of chat) {
         const r = m?.extra?.narrator;
-        const mes = String(m?.mes ?? '');
-        out += `|${m?.narrator_id ?? ''}${m?.is_user ? 'u' : ''}${m?.is_system ? 'h' : ''}${m?.swipe_id ?? ''}:${mes.length}:${mes.slice(0, 12)}${mes.slice(-12)}:${arr(m?.narrator_ops).length}.${arr(m?.narrator_ops).at(-1)?.at ?? ''}:${r ? `${r.obs?.at ?? ''}.${r.obs?.hash ?? ''}.${r.track?.at ?? ''}.${arr(r.ops).length}.${arr(r.ops).at(-1)?.at ?? ''}.${r.err?.n ?? ''}.${r.trackErr?.n ?? ''}` : ''}`;
+        out += `|${m.narrator_id ?? ''}:${m.narrator_revision?.id ?? ''}:${m.is_user ? 'u' : ''}${m.is_system ? 'h' : ''}:${m.swipe_id ?? ''}:${rawTextHash(m)}`;
+        out += `:${m.name ?? ''}:${m.original_avatar ?? ''}:${m.extra?.type ?? ''}:${r?.post ? 'p' : ''}:${arr(m.narrator_ops).length}.${arr(m.narrator_ops).at(-1)?.at ?? ''}`;
+        if (r) out += `:${r.obs?.at ?? ''}.${r.obs?.hash ?? ''}.${r.track?.at ?? ''}.${arr(r.ops).length}.${arr(r.ops).at(-1)?.at ?? ''}.${r.err?.n ?? ''}.${r.trackErr?.n ?? ''}`;
     }
     return out;
 }
@@ -140,12 +141,14 @@ export const DEFAULTS = {
     briefTokens: 300,
     storyTokens: 1200,
     maxRetries: 2,
+    requestTimeoutMs: 180_000,
     tokens: { observer: 1500, tracker: 600, planner: 3000, summariser: 500, genre: 700, profile: 700, opening: 900, cleanup: 900 },
 };
 
 /**
  * @typedef {object} Host
  * @property {() => object[]} chat
+ * @property {() => string} [chatKey] Identity of the active host chat, independent of the mutable message array.
  * @property {() => import('./state.js').NarratorRef|null} narrator
  * @property {() => object} setup Setup values: { genre, premise, player }.
  * @property {(patch: object) => void} setSetup
@@ -168,13 +171,15 @@ export class Director {
     constructor(host) {
         this.host = host;
         this.epoch = 0;
+        this.chatKey = host.chatKey?.();
         this.running = false;
         this.again = false;
         this.queues = new Map();
         this.calls = {};
         this.errors = [];
         this.failing = {};
-        this.profileFails = {};
+        this.profileFails = new Map();
+        this.profileConnectionFailure = null;
         this.mids = null;
         this.abort = new AbortController();
         /** Replies whose record went stale (edited, swiped). They are re-read even outside the backfill window. */
@@ -197,15 +202,28 @@ export class Director {
         return { ...DEFAULTS, ...this.host.settings(), tokens: { ...DEFAULTS.tokens, ...(this.host.settings().tokens ?? {}) } };
     }
 
+    owns(epoch = this.epoch) {
+        return epoch === this.epoch && this.chatKey === this.host.chatKey?.();
+    }
+
     /** Drop everything in flight: the chat changed underneath us. */
     reset() {
         this.epoch++;
+        this.chatKey = this.host.chatKey?.();
         this.abort.abort();
         this.abort = new AbortController();
+        for (const q of this.queues.values()) {
+            for (const job of q.jobs.splice(0)) job.reject(new Error('superseded'));
+        }
+        this.queues.clear();
+        this.running = false;
+        this.pass = null;
+        this.unsaved = false;
         this.mids = null;
         this.errors = [];
         this.failing = {};
-        this.profileFails = {};
+        this.profileFails.clear();
+        this.profileConnectionFailure = null;
         this.calls = {};
         this.again = false;
         this.reread.clear();
@@ -216,18 +234,30 @@ export class Director {
         clearTimeout(this.retryTimer);
         this.retryTimer = null;
         this.emptyRun = {};
+        this.viewCache = null;
+        this.scanCache = null;
     }
 
     /** Align records with the chat. Cheap; safe to call on every event. */
     sync() {
-        // Each pass starts from the chat as it is now: an edit made in place, which the cache key cannot see, is picked up here.
+        if (!this.owns()) return { changed: false, stale: [], deleted: [], mids: this.mids };
+        // Callers also sync after changing a saved record in place.
         this.viewCache = null;
-        this.scanCache = null;
         const chat = this.host.chat();
         const r = reconcile(chat, this.host.narrator(), this.mids);
+        if (r.changed || r.deleted.length) {
+            this.scanCache = null;
+        }
         this.mids = r.mids;
         for (const id of r.stale) this.reread.add(id);
         for (const id of r.deleted) this.reread.delete(id);
+        if ((r.stale.length || r.deleted.length) && this.profileFails.size) {
+            const cast = this.view().cast;
+            for (const [key, failure] of this.profileFails) {
+                if (failure.source !== 'card' && !cast[failure.name]) this.profileFails.delete(key);
+            }
+            this.updateProfileWarning();
+        }
         if (r.changed) this.save();
         return r;
     }
@@ -235,27 +265,40 @@ export class Director {
     /** @param {{includeProvisional?: boolean, upto?: number}} [opts] */
     /**
      * The state, rebuilt by replay. Cached per chat revision (audit, 22 Nov 2026: one setup pass replayed the whole chat
-     * 4-6 times). The key is a cheap print of every message (text length and ends, swipe, hidden flag, record and op
-     * counts and times) plus the context and options; any change to the chat or the records changes it. Callers get a
+     * 4-6 times). The key includes the message digests, current records, context and options. Callers get a
      * copy, so nothing they do to the state reaches the cache.
      */
     view(opts) {
+        return structuredClone(this.readView(opts));
+    }
+
+    /** The cached state, for internal consumers that only read it. */
+    readView(opts) {
         const chat = this.host.chat();
         const ctx = this.ctx();
-        const key = `${JSON.stringify(opts ?? {})}#${JSON.stringify(ctx)}#${chatPrint(chat)}`;
+        const snapshot = this.readings(ctx.narrator);
+        const key = `${JSON.stringify(opts ?? {})}#${JSON.stringify(ctx)}#${snapshot.print}`;
         const hit = this.viewCache?.get(key);
-        if (hit) return structuredClone(hit);
-        const state = replay(chat, ctx, opts);
+        if (hit) return hit;
+        const state = replay(chat, ctx, opts, snapshot.entries);
         this.viewCache ??= new Map();
         if (this.viewCache.size >= 6) this.viewCache.delete(this.viewCache.keys().next().value);
-        this.viewCache.set(key, structuredClone(state));
+        this.viewCache.set(key, state);
         return state;
     }
 
-    lorebook(state = null) {
+    readings(narrator = this.host.narrator()) {
         const chat = this.host.chat();
-        const st = state ?? this.view();
-        const texts = scan(chat, this.host.narrator()).filter(e => e.kind === 'narration' && e.committed).map(e => e.text);
+        const print = `${JSON.stringify(narrator)}#${chatPrint(chat)}`;
+        if (this.scanCache?.chat !== chat || this.scanCache.print !== print) {
+            this.scanCache = { chat, print, entries: scan(chat, narrator) };
+        }
+        return this.scanCache;
+    }
+
+    lorebook(state = null) {
+        const st = state ?? this.readView();
+        const texts = this.readings().entries.filter(e => e.kind === 'narration' && e.committed).map(e => e.text);
         const titles = this.host.castNames?.() ?? [];
         return buildLorebook(st.lore_drafts, texts, { recurrence: this.cfg().recurrence, exclude: [...titles, ...castPeople(st, titles)] });
     }
@@ -267,6 +310,7 @@ export class Director {
      * Check calls ('tracker-check', 'planner-check') use their parent role's profile, temperature and answer limit.
      */
     model(module, messages) {
+        if (!this.owns()) return Promise.reject(new Error('superseded'));
         const cfg = this.cfg();
         const role = ROLE_OF[module] ?? module;
         const profile = cfg.profiles?.[role] || cfg.profile || '';
@@ -293,64 +337,86 @@ export class Director {
     }
 
     async runCall(module, role, messages, cfg, epoch, signal) {
-        {
-            if (epoch !== this.epoch) throw new Error('superseded');
-            const started = Date.now();
-            // Sizes for the inspector's cost table: characters and a rough token estimate from text length.
-            const promptText = arr(messages).map(m => String(m?.content ?? '')).join('\n');
-            const entry = { module, messages, raw: '', error: null, at: started, ms: 0, promptChars: promptText.length, promptTokens: roughTokens(promptText), answerChars: 0, answerTokens: 0 };
-            this.calls[module] = entry;
-            try {
-                entry.raw = String(await this.host.call(module, messages, cfg.tokens[module] ?? cfg.tokens[role] ?? 800, signal) ?? '');
-                // An empty answer is the connection's failure (a timeout, a dropped stream), not the input's. It is
-                // marked transient so it never counts against a reply's tries.
-                if (!entry.raw.trim()) {
-                    // Counted per module: another module's answer says nothing about this one's model.
-                    const run = this.emptyRun[module] = (this.emptyRun[module] ?? 0) + 1;
-                    if (run <= TRANSIENT_WAITS.length) throw Object.assign(new Error(`${module}: empty answer from the connection`), { transient: true, run });
-                    throw new Error(`${module}: empty answer from the connection, ${run} in a row; automatic retries stopped until "Retry failed calls"`);
-                }
-                delete this.emptyRun[module];
-                return entry.raw;
-            } catch (e) {
-                entry.error = String(e?.cause?.message ?? e?.message ?? e);
-                // A dropped connection (socket hang up, reset, timeout) is the connection's failure too: retried with
-                // growing waits, then stopped, like an empty answer (owner, 21 Nov 2026).
-                if (!e?.transient && DROPPED.test(`${entry.error} ${e?.message ?? ''}`)) {
-                    const run = this.emptyRun[module] = (this.emptyRun[module] ?? 0) + 1;
-                    if (run <= TRANSIENT_WAITS.length) throw Object.assign(new Error(`${module}: ${entry.error}`), { transient: true, run });
-                    throw new Error(`${module}: ${entry.error}, ${run} in a row; automatic retries stopped until "Retry failed calls"`);
-                }
-                throw e;
-            } finally {
-                entry.ms = Date.now() - started;
-                entry.answerChars = entry.raw.length;
-                entry.answerTokens = roughTokens(entry.raw);
-                // A reset (chat change) during the call starts a fresh table; this call belongs to the old chat.
-                if (epoch === this.epoch) {
-                    const u = this.usage[module] ??= { calls: 0, promptTokens: 0, answerTokens: 0 };
-                    u.calls++;
-                    u.promptTokens += entry.promptTokens;
-                    u.answerTokens += entry.answerTokens;
-                }
+        if (!this.owns(epoch)) throw new Error('superseded');
+        const request = new AbortController();
+        const cancel = () => request.abort(new Error('superseded'));
+        signal.addEventListener('abort', cancel, { once: true });
+        const deadline = Number(cfg.requestTimeoutMs);
+        const ms = Number.isFinite(deadline) && deadline > 0 ? deadline : DEFAULTS.requestTimeoutMs;
+        const timer = setTimeout(() => request.abort(new Error(`request timed out after ${ms} ms`)), ms);
+        const interrupted = new Promise((_, reject) => {
+            request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true });
+        });
+        const started = Date.now();
+        // Sizes for the inspector's cost table: characters and a rough token estimate from text length.
+        const promptText = arr(messages).map(m => String(m?.content ?? '')).join('\n');
+        const entry = { module, messages, raw: '', error: null, at: started, ms: 0, promptChars: promptText.length, promptTokens: roughTokens(promptText), answerChars: 0, answerTokens: 0 };
+        this.calls[module] = entry;
+        try {
+            const raw = await Promise.race([
+                interrupted,
+                Promise.resolve().then(() => {
+                    if (!this.owns(epoch)) throw new Error('superseded');
+                    request.signal.throwIfAborted();
+                    return this.host.call(module, messages, cfg.tokens[module] ?? cfg.tokens[role] ?? 800, request.signal);
+                }),
+            ]);
+            if (!this.owns(epoch)) throw new Error('superseded');
+            entry.raw = String(raw ?? '');
+            // An empty answer is the connection's failure (a timeout, a dropped stream), not the input's. It is
+            // marked transient so it never counts against a reply's tries.
+            if (!entry.raw.trim()) {
+                // Counted per module: another module's answer says nothing about this one's model.
+                const run = this.emptyRun[module] = (this.emptyRun[module] ?? 0) + 1;
+                if (run <= TRANSIENT_WAITS.length) throw Object.assign(new Error(`${module}: empty answer from the connection`), { transient: true, run });
+                throw new Error(`${module}: empty answer from the connection, ${run} in a row; automatic retries stopped until "Retry failed calls"`);
+            }
+            delete this.emptyRun[module];
+            return entry.raw;
+        } catch (e) {
+            if (!this.owns(epoch)) throw new Error('superseded');
+            if (request.signal.aborted) e = request.signal.reason;
+            entry.error = String(e?.cause?.message ?? e?.message ?? e);
+            // A dropped connection (socket hang up, reset, timeout) is the connection's failure too: retried with
+            // growing waits, then stopped, like an empty answer (owner, 21 Nov 2026).
+            if (!e?.transient && (request.signal.aborted || DROPPED.test(`${entry.error} ${e?.message ?? ''}`))) {
+                const run = this.emptyRun[module] = (this.emptyRun[module] ?? 0) + 1;
+                if (run <= TRANSIENT_WAITS.length) throw Object.assign(new Error(`${module}: ${entry.error}`), { transient: true, run });
+                throw new Error(`${module}: ${entry.error}, ${run} in a row; automatic retries stopped until "Retry failed calls"`);
+            }
+            throw e;
+        } finally {
+            clearTimeout(timer);
+            signal.removeEventListener('abort', cancel);
+            entry.ms = Date.now() - started;
+            entry.answerChars = entry.raw.length;
+            entry.answerTokens = roughTokens(entry.raw);
+            // A reset (chat change) during the call starts a fresh table; this call belongs to the old chat.
+            if (this.owns(epoch)) {
+                const u = this.usage[module] ??= { calls: 0, promptTokens: 0, answerTokens: 0 };
+                u.calls++;
+                u.promptTokens += entry.promptTokens;
+                u.answerTokens += entry.answerTokens;
             }
         }
     }
 
     async json(module, messages, validate) {
+        const epoch = this.epoch;
         const raw = await this.model(module, messages);
+        if (!this.owns(epoch)) throw new Error('superseded');
         const parsed = extractJson(raw);
-        if (!parsed.ok) throw new Error(`${module}: ${parsed.error}`);
+        if (!parsed.ok) throw Object.assign(new Error(`${module}: ${parsed.error}`), { invalidAnswer: true });
         const v = validate(parsed.value);
-        if (!v.ok) throw new Error(`${module}: ${v.error}`);
+        if (!v.ok) throw Object.assign(new Error(`${module}: ${v.error}`), { invalidAnswer: true });
         // Recovered only once an answer is usable, not merely received: a model answering in the wrong shape still fails.
-        this.recovered(module);
+        if (module !== 'profile') this.recovered(module);
         return v.value;
     }
 
-    fail(module, e, mid = null) {
+    fail(module, e, mid = null, details = {}) {
         if (String(e?.message) === 'superseded' || e?.name === 'AbortError') return;
-        const entry = { module, error: String(e?.cause?.message ?? e?.message ?? e), mid, at: Date.now() };
+        const entry = { module, error: String(e?.cause?.message ?? e?.message ?? e), mid, at: Date.now(), ...details };
         this.errors.push(entry);
         if (this.errors.length > 20) this.errors.shift();
         console.warn(`[Narrator Director] ${module} failed`, e);
@@ -372,6 +438,7 @@ export class Director {
      * chat up to 7 times). A player's own edit still saves at once (playerOp).
      */
     save() {
+        if (!this.owns()) return;
         if (this.running) { this.unsaved = true; return; }
         this.host.save();
     }
@@ -385,6 +452,8 @@ export class Director {
 
     /** Start (or re-run) the background pass. Single flight. */
     kick() {
+        const epoch = this.epoch;
+        if (!this.owns(epoch)) return Promise.resolve();
         if (this.running) { this.again = true; return this.pass; }
         this.running = true;
         this.pass = (async () => {
@@ -392,10 +461,12 @@ export class Director {
                 do {
                     this.again = false;
                     await this.work();
-                } while (this.again);
+                } while (this.owns(epoch) && this.again);
             } finally {
-                this.running = false;
-                this.flushSave();
+                if (this.owns(epoch)) {
+                    this.running = false;
+                    this.flushSave();
+                }
             }
         })();
         return this.pass;
@@ -407,13 +478,21 @@ export class Director {
      * spine twice). It waits for a running pass, holds the slot while it runs, then lets a pass that was asked for meanwhile run.
      */
     async exclusive(fn) {
-        while (this.running) await this.pass;
+        const epoch = this.epoch;
+        while (this.owns(epoch) && this.running) await this.pass;
+        if (!this.owns(epoch)) throw new Error('superseded');
         this.running = true;
         let out, err = null;
         this.pass = (async () => {
-            try { out = await fn(); } catch (e) { err = e; } finally { this.running = false; this.flushSave(); }
+            try { out = await fn(); } catch (e) { err = e; } finally {
+                if (this.owns(epoch)) {
+                    this.running = false;
+                    this.flushSave();
+                }
+            }
         })();
         await this.pass;
+        if (!this.owns(epoch)) throw new Error('superseded');
         if (this.again) { this.again = false; this.kick(); }
         if (err) throw err;
         return out;
@@ -434,11 +513,11 @@ export class Director {
                 // A transient failure waits its turn: a chat event does not retry before it (audit, 21 Nov 2026).
                 if ((this.cool.observer ?? 0) > Date.now()) break;
                 const next = this.nextUnread();
-                if (!next || epoch !== this.epoch) break;
+                if (!next || !this.owns(epoch)) break;
                 const done = await this.observe(next);
                 // A reply that changed while it was read (still streaming, or swiped) waits for the next pass instead of being
                 // read again at once (package audit P1, 22 Nov 2026: up to 50 paid reads of one streaming reply per pass).
-                if (epoch !== this.epoch || done === 'transient' || (!done && this.again)) break;
+                if (!this.owns(epoch) || done === 'transient' || (!done && this.again)) break;
                 if (done) this.host.changed?.('observed');
             }
         })();
@@ -446,15 +525,15 @@ export class Director {
             // The spine only, in batches: once enough answered replies wait, or at once when the player asks.
             for (let guard = 0; guard < 20; guard++) {
                 const batch = this.nextBatch(force);
-                if (!batch || epoch !== this.epoch) break;
+                if (!batch || !this.owns(epoch)) break;
                 const done = await this.track(batch);
-                if (epoch !== this.epoch) break;
+                if (!this.owns(epoch)) break;
                 if (done) this.host.changed?.('tracked');
                 else break; // failed or superseded: the next pass tries again
             }
         })();
         await Promise.all([observing, tracking]);
-        if (epoch !== this.epoch) return;
+        if (!this.owns(epoch)) return;
         // 2. Setup and planning rest on the freshest view.
         const steps = {
             genre: () => this.ensureGenre(), profile: () => this.ensureProfiles(), spine: () => this.ensureSpine(),
@@ -466,20 +545,23 @@ export class Director {
             // would be repeated on every chat event.
             if ((this.cool[name] ?? 0) > Date.now()) continue;
             try {
-                if (await step()) { this.save(); this.host.changed?.('directed'); }
-                this.recovered(name); // the step ran through: whatever failed under its name works again
+                const changed = await step();
+                if (!this.owns(epoch)) return;
+                if (changed) { this.save(); this.host.changed?.('directed'); }
+                if (name !== 'profile') this.recovered(name);
             } catch (e) {
+                if (!this.owns(epoch)) return;
                 this.cool[name] = Date.now() + (e?.transient ? this.transientWait(e.run) : COOL_MS);
                 if (e?.transient) this.retrySoon(e.run);
                 this.fail(name, e);
             }
-            if (epoch !== this.epoch) return;
+            if (!this.owns(epoch)) return;
         }
     }
 
     nextUnread() {
         const cfg = this.cfg();
-        const entries = scan(this.host.chat(), this.host.narrator());
+        const entries = this.readings().entries;
         const narr = entries.filter(e => e.kind === 'narration' && !e.hidden);
         // The newest reply is not read while the narrator is still writing it.
         if (this.host.generating?.() && narr.at(-1)?.i === entries.at(-1)?.i) narr.pop();
@@ -490,20 +572,31 @@ export class Director {
 
     /** Observer: extract and check one reply. Returns true when a record was written. */
     async observe(entry) {
-        const chat = this.host.chat();
-        const before = replay(chat, this.ctx(), { upto: entry.i });
+        const epoch = this.epoch;
+        const before = this.view({ upto: entry.i });
         // Card people the player removed or renamed away stay out, even if a re-profile brought the old name back.
         for (const n of castPeople(before, this.host.castNames?.() ?? [])) {
             if (!before.meta.removedCast.includes(n) && !(n in before.meta.renamedCast)) ensureCast(before, n);
         }
         const offered = buildBrief(before).offered;
-        let playerMessage = '';
-        for (let i = entry.i - 1; i >= 0; i--) if (chat[i].is_user) { playerMessage = chat[i].mes; break; }
+        const player = entry.player;
+        const playerMessage = player?.mes ?? '';
+        const playerBasis = { mid: player?.narrator_id ?? null, revision: player ? activeRevision(player, this.host.narrator()) : null };
         const messages = observerPrompt({ state: before, reply: entry.text, playerMessage, offered });
         const rec = entry.m.extra.narrator;
-        const stillCurrent = () => this.host.chat().includes(entry.m) && hash(visibleText(entry.m, this.host.narrator())) === entry.hash;
+        const stillCurrent = () => {
+            const current = this.host.chat();
+            const index = current.indexOf(entry.m);
+            if (index < 0 || activeRevision(entry.m, this.host.narrator()) !== entry.revision
+                || hash(visibleText(entry.m, this.host.narrator())) !== entry.hash) return false;
+            for (let i = index - 1; i >= 0; i--) if (current[i].is_user) {
+                return current[i] === player && activeRevision(player, this.host.narrator()) === playerBasis.revision;
+            }
+            return !player;
+        };
         try {
             const raw = await this.model('observer', messages);
+            if (!this.owns(epoch)) return false;
             if (!stillCurrent()) { this.again = true; return false; } // the reply changed while we worked: discard
             const parsed = extractJson(raw);
             if (!parsed.ok) throw new Error(`observer: ${parsed.error}`);
@@ -518,11 +611,12 @@ export class Director {
                 known: [playerMessage, ...before.canon.map(f => f.fact), ...before.uncertain.map(f => f.fact)].join('\n'),
             });
             this.recovered('observer');
-            rec.obs = { hash: entry.hash, delta: v.delta, accepted: v.accepted, rejected: slimRejected(v.rejected), beat: offered.beat, at: Date.now(), strip: [...(this.host.narrator()?.strip ?? [])] };
+            rec.obs = { hash: entry.hash, revision: entry.revision, player: playerBasis, delta: v.delta, accepted: v.accepted, rejected: slimRejected(v.rejected), beat: offered.beat, at: Date.now(), strip: [...(this.host.narrator()?.strip ?? [])] };
             delete rec.err;
             this.save();
             return true;
         } catch (e) {
+            if (!this.owns(epoch)) return false;
             if (!stillCurrent()) { this.again = true; return false; }
             if (e?.transient) { this.cool.observer = Date.now() + this.transientWait(e.run); this.fail('observer', e, entry.mid); this.retrySoon(e.run); return 'transient'; }
             if (String(e?.message) !== 'superseded' && e?.name !== 'AbortError') {
@@ -544,15 +638,26 @@ export class Director {
     retrySoon(run = 1) {
         if (this.retryTimer) return;
         const epoch = this.epoch;
-        this.retryTimer = setTimeout(() => { this.retryTimer = null; if (epoch === this.epoch) this.kick(); }, this.transientWait(run));
+        this.retryTimer = setTimeout(() => {
+            if (!this.owns(epoch)) return;
+            this.retryTimer = null;
+            this.kick();
+        }, this.transientWait(run));
         this.retryTimer.unref?.();
     }
 
     /** Ask the spine tracker to read whatever replies are waiting, now, without waiting for a full batch. */
-    trackNow() {
+    async trackNow() {
+        this.sync();
+        const epoch = this.epoch;
+        const pending = this.nextBatch(true);
+        if (!pending) return { status: 'current' };
         this.forceTrack = true;
         delete this.cool.tracker;
-        return this.kick();
+        await this.kick();
+        if (!this.owns(epoch)) return { status: 'superseded' };
+        const covered = new Set(this.readings().entries.filter(e => e.tracked).map(e => e.mid));
+        return { status: pending.every(e => covered.has(e.mid)) ? (this.nextBatch(true) ? 'partial' : 'checked') : 'pending' };
     }
 
     /**
@@ -568,10 +673,7 @@ export class Director {
         const isSpineOp = (op) => op.kind === 'spine' || (op.kind === 'edit' && op.path === 'spine');
         const from = chat.findIndex(m => [...arr(m.narrator_ops), ...arr(m.extra?.narrator?.ops)].some(isSpineOp));
         if (from === -1 || (!force && (this.cool.tracker ?? 0) > Date.now())) return null;
-        // Scanned once per chat revision: the tracking loop asks up to 20 times a pass (audit map, 22 Nov 2026).
-        const print = chatPrint(chat);
-        if (this.scanCache?.print !== print) this.scanCache = { print, entries: scan(chat, this.host.narrator()) };
-        const entries = this.scanCache.entries;
+        const entries = this.readings().entries;
         const narr = entries.filter(e => e.kind === 'narration' && !e.hidden);
         const windowed = new Set(narr.slice(-Math.max(cfg.backfill, every)));
         const waiting = narr.filter(e => e.i > from && windowed.has(e) && !e.tracked && e.text && (force || e.committed));
@@ -597,32 +699,39 @@ export class Director {
 
     /** Spine tracker: read a batch of replies for the spine only. Stored on the batch's last reply. True when written. */
     async track(batch) {
+        const epoch = this.epoch;
         const chat = this.host.chat();
         const before = replay(chat, this.ctx(), { upto: batch[0].i });
         if (!before.spine) return false;
         const playerBefore = (i) => { for (let j = i - 1; j >= 0; j--) if (chat[j].is_user) return chat[j].mes; return ''; };
         const exchanges = batch.map(e => ({ player: playerBefore(e.i), reply: e.text }));
         const carrier = batch.at(-1);
+        const basis = this.basis(carrier.m);
         const rec = carrier.m.extra.narrator;
         const sig = hash(batch.map(e => e.hash).join('|'));
-        const stillCurrent = () => batch.every(e => this.host.chat().includes(e.m) && hash(visibleText(e.m, this.host.narrator())) === e.hash);
+        const stillCurrent = () => this.basisCurrent(basis) && batch.every(e => this.host.chat().includes(e.m)
+            && activeRevision(e.m, this.host.narrator()) === e.revision
+            && hash(visibleText(e.m, this.host.narrator())) === e.hash);
         try {
             const raw = await this.model('tracker', trackerPrompt({ state: before, exchanges }));
+            if (!this.owns(epoch)) return false;
             if (!stillCurrent()) { this.again = true; return false; }
             const parsed = extractJson(raw);
             if (!parsed.ok) throw new Error(`tracker: ${parsed.error}`);
             const ids = spineIds(before);
             const texts = batch.map(e => e.text);
             const v = await this.checkMarks(validateTracking(parsed.value, { texts, spine: ids, names: Object.keys(before.cast), player: before.meta.player, settledIds: playerSettled(before).map(s => s.id) }), texts, before, ids);
+            if (!this.owns(epoch)) return false;
             if (!stillCurrent()) { this.again = true; return false; }
             // A batch that fitted lets the next one grow back by a reply, up to the usual size (audit map, 22 Nov 2026).
             if (this.trackMax) this.trackMax = this.trackMax + 1 >= (Number(this.cfg().trackEvery) || DEFAULTS.trackEvery) ? null : this.trackMax + 1;
             this.recovered('tracker');
-            rec.track = { covers: batch.map(e => ({ mid: e.mid, hash: e.hash })), delta: v.delta, rejected: slimRejected(v.rejected), at: Date.now(), strip: [...(this.host.narrator()?.strip ?? [])] };
+            rec.track = { covers: batch.map(e => ({ mid: e.mid, hash: e.hash, revision: e.revision })), basis, delta: v.delta, rejected: slimRejected(v.rejected), at: Date.now(), strip: [...(this.host.narrator()?.strip ?? [])] };
             delete rec.trackErr;
             this.save();
             return true;
         } catch (e) {
+            if (!this.owns(epoch)) return false;
             if (!stillCurrent()) { this.again = true; return false; }
             if (e?.transient) { this.cool.tracker = Date.now() + this.transientWait(e.run); this.fail('tracker', e, carrier.mid); this.retrySoon(e.run); return false; }
             // Out of thinking room: the same input would fail the same way. Halve the batch (audit, 21 Nov 2026: four
@@ -644,17 +753,22 @@ export class Director {
      * the tracker gave them (owner, 18 Nov 2026): a failed check never stalls the spine.
      */
     async checkMarks(v, texts, state, ids) {
+        const epoch = this.epoch;
         const met = v.delta.marks.filter(m => m.mark === 'met');
         if (!met.length) return v;
         const items = met.map(m => {
             const c = findCriterion(state.spine, m.id)?.criterion;
-            return { id: m.id, criterion: c?.text ?? '', role: c?.role ?? '', quote: m.quote, context: aroundQuote(texts[m.exchange - 1], m.quote), speaker: m.speaker ?? '' };
+            return {
+                id: m.id, criterion: c?.text ?? '', role: c?.role ?? '', quote: m.quote,
+                context: aroundQuote(texts[m.exchange - 1], m.quote), speaker: m.speaker ?? '',
+                ...(m.also ? { also: { ...m.also, context: aroundQuote(texts[m.also.exchange - 1], m.also.quote) } } : {}),
+            };
         });
         try {
             const verdicts = await this.json('tracker-check', trackCheckPrompt({ items }), raw => validateTrackCheck(raw, items.map(i => i.id)));
             return applyTrackCheck(v, verdicts, ids.milestoneCriteria);
         } catch (e) {
-            if (String(e?.message) === 'superseded' || e?.name === 'AbortError') throw e;
+            if (!this.owns(epoch) || String(e?.message) === 'superseded' || e?.name === 'AbortError') throw e;
             this.fail('tracker-check', e);
             return v;
         }
@@ -665,36 +779,49 @@ export class Director {
         return chat.length ? chat[chat.length - 1] : null;
     }
 
+    basis(through = this.latest()) {
+        return through ? storyBasis(this.host.chat(), this.host.narrator(), through) : undefined;
+    }
+
+    basisCurrent(basis) {
+        if (!basis) return true;
+        const through = this.host.chat().find(message => message.narrator_id === basis.mid);
+        return !!through && this.basis(through)?.fingerprint === basis.fingerprint;
+    }
+
     /**
      * Log a director op on the message it was computed from. It stays valid when newer messages have arrived
      * since (the player typed while the planner was thinking); it is discarded only if that message itself
      * was swiped, edited or deleted.
      */
-    logOnAnchor(anchor, anchorHash, op) {
-        if (!this.host.chat().includes(anchor) || hash(anchor.mes) !== anchorHash) { this.again = true; return false; }
+    logOnAnchor(epoch, anchor, anchorHash, op) {
+        if (!this.owns(epoch)) return false;
+        if (!this.host.chat().includes(anchor) || hash(anchor.mes) !== anchorHash || !this.basisCurrent(op.basis)) { this.again = true; return false; }
         logOp(anchor, op);
         return true;
     }
 
     /** Setup results (profiles, roll-ups) do not depend on the latest reply: log them on whatever is latest now. */
     logSetup(epoch, op) {
+        if (!this.owns(epoch)) return false;
         const m = this.latest();
-        if (epoch !== this.epoch || !m) return false;
+        if (!m || !this.basisCurrent(op.basis)) return false;
         logOp(m, op);
         return true;
     }
 
     async ensureGenre(force = false) {
+        const epoch = this.epoch;
         const setup = this.host.setup();
         if ((setup.genre && !force) || !this.host.material) return false;
         const material = await this.host.material();
-        if (!str(material, 50)) return false;
-        const epoch = this.epoch;
+        if (!this.owns(epoch) || !str(material, 50)) return false;
         const drafted = await this.json('genre', genrePrompt({ material }), validateGenre);
-        if (epoch !== this.epoch) return false;
-        // A re-run keeps the rating the story already has; a new story takes the default.
-        const rating = setup.genre ? (this.view().genre?.pg ? 'pg' : 'mature') : (this.cfg().rating ?? 'mature');
-        const value = applyRating(drafted, rating);
+        if (!this.owns(epoch)) return false;
+        // A re-run keeps the content choices already set for the story.
+        const current = setup.genre && this.view().genre;
+        const value = current ? { ...drafted, pg: current.pg, explicit: current.explicit, lethality: current.lethality }
+            : applyRating(drafted, this.cfg().rating ?? 'mature');
         const m = this.latest();
         if (force && setup.genre && m) logOp(m, { kind: 'genre', by: 'setup', value });
         else this.host.setSetup({ genre: value });
@@ -702,73 +829,107 @@ export class Director {
     }
 
     async ensureProfiles() {
-        if (!this.host.cards) return false;
-        const state = this.view();
-        if (!state.genre) return false;
+        const epoch = this.epoch;
+        if (!this.host.cards || !this.view().genre) return false;
         const cards = await this.host.cards();
+        if (!this.owns(epoch)) return false;
+        const eligible = new Set();
         let wrote = false;
-        for (const card of cards) {
-            const h = hash(card.text);
-            // Keyed by the card, not the cast: a card's people may carry other names than its title.
-            if (!str(card.text, 20) || state.cards[card.name]?.hash === h) continue;
-            // A card the model keeps failing on is set aside after its tries, so it no longer holds back the others
-            // (package audit, 22 Nov 2026). "Retry failed calls" gives it another go.
-            if ((this.profileFails[h] ?? 0) >= this.cfg().maxRetries) continue;
-            const epoch = this.epoch;
-            try {
-                const value = await this.json('profile', profilePrompt({ name: card.name, card: card.text, genre: state.genre, isPlayer: card.isPlayer }), validateProfile);
-                // A changed card refreshes the description and tells; stats keep their played values.
-                // The player character's sheet follows their sources until the player sets the stats by hand (audit, 21 Nov 2026).
-                wrote = this.logSetup(epoch, { kind: 'profile', by: 'setup', name: card.name, value, cardHash: h, pc: !!card.isPlayer, ...(card.isPlayer ? { force: true } : {}), ...(card.aliases?.length ? { aliases: card.aliases } : {}) }) || wrote;
-            } catch (e) {
-                this.profileFails[h] = (this.profileFails[h] ?? 0) + 1;
-                this.cool.profile = Date.now() + COOL_MS;
-                this.fail('profile', Object.assign(new Error(`${card.name}: ${e?.message ?? e}`), { transient: e?.transient }));
-                return wrote;
+        let recovered = false;
+
+        // Successful card profiles establish the cast names used by the lower-priority sources.
+        const atStart = this.view();
+        const reserved = new Set(cards.filter(card => str(card.text, 20))
+            .flatMap(card => [card.name, ...arr(atStart.cards[card.name]?.people)]));
+        const sources = [
+            ['card', () => cards],
+            ['lore', () => loreCards(this.view(), this.host.loreEntries?.() ?? []).filter(card => !reserved.has(card.name))],
+            ['story', () => storyCards(this.view(), this.host.chat(), this.host.narrator(), this.host.loreEntries?.() ?? [])
+                .filter(card => !reserved.has(card.name))],
+        ];
+        for (const [source, candidates] of sources) {
+            const state = this.view();
+            for (const card of candidates()) {
+                const version = card.hash ?? hash(card.text);
+                if (!str(card.text, 20) || (source === 'card' && state.cards[card.name]?.hash === version)) continue;
+                const key = source + ':' + card.name;
+                eligible.add(key);
+                const failed = this.profileFails.get(key);
+                const attempts = failed?.version === version ? failed.attempts : 0;
+                if (attempts >= this.cfg().maxRetries && failed) continue;
+                const basis = source !== 'card' ? this.basis() : undefined;
+                try {
+                    const value = await this.json('profile', profilePrompt({
+                        name: card.name, card: card.text, genre: state.genre,
+                        isPlayer: !!card.isPlayer, story: source === 'story',
+                    }), raw => validateProfile(raw, source === 'card' && !card.isPlayer));
+                    if (!this.owns(epoch)) return false;
+                    if (source !== 'card' && !this.view().cast[card.name]) {
+                        this.profileFails.delete(key);
+                        continue;
+                    }
+                    if (source !== 'card') value.name = card.name;
+                    const logged = this.logSetup(epoch, {
+                        kind: 'profile', by: 'setup', name: card.name, value, cardHash: version, pc: !!card.isPlayer,
+                        ...(card.isPlayer ? { force: true } : {}),
+                        ...(card.aliases?.length ? { aliases: card.aliases } : {}),
+                        ...(source !== 'card' ? { lore: true } : {}),
+                        ...(source === 'story' ? { story: true } : {}),
+                        ...(basis ? { basis } : {}),
+                    });
+                    if (!logged) continue;
+                    wrote = true;
+                    recovered = this.profileFails.delete(key) || !!this.profileConnectionFailure || recovered;
+                    this.profileConnectionFailure = null;
+                } catch (error) {
+                    if (!this.owns(epoch)) return false;
+                    if (source !== 'card' && !this.view().cast[card.name]) {
+                        this.profileFails.delete(key);
+                        continue;
+                    }
+                    if (!error?.invalidAnswer) {
+                        this.profileConnectionFailure = error;
+                        this.cool.profile = Date.now() + (error?.transient ? this.transientWait(error.run) : COOL_MS);
+                        if (error?.transient) this.retrySoon(error.run);
+                        this.updateProfileWarning(true);
+                        return wrote;
+                    }
+                    this.profileConnectionFailure = null;
+                    this.profileFails.set(key, { name: card.name, source, version, attempts: attempts + 1, error });
+                    this.updateProfileWarning();
+                }
             }
         }
-        // Cast members the story brought in whom an authored lorebook entry describes (live, 21 Nov 2026: Janus and
-        // Bianca, written up in "Cast & Setting", never got stats because only cards were profiled). Profiled once from
-        // their entry, like a card; logged on the latest reply, so it follows their introduction.
-        for (const card of loreCards(this.view(), this.host.loreEntries?.() ?? [])) {
-            const epoch = this.epoch;
-            try {
-                const value = await this.json('profile', profilePrompt({ name: card.name, card: card.text, genre: state.genre, isPlayer: false }), validateProfile);
-                delete value.people;
-                value.name = card.name;
-                // The reply that introduced them may have been swiped while the call ran (audit, 22 Nov 2026).
-                if (!this.view().cast[card.name]) continue;
-                wrote = this.logSetup(epoch, { kind: 'profile', by: 'setup', name: card.name, value, cardHash: card.hash, lore: true, aliases: card.aliases }) || wrote;
-            } catch (e) {
-                this.cool.profile = Date.now() + COOL_MS;
-                this.fail('profile', e);
-                return wrote;
-            }
+        for (const key of this.profileFails.keys()) {
+            if (!eligible.has(key)) this.profileFails.delete(key);
         }
-        // Everyone else the story brought in (no card, no lorebook entry) is profiled once from what the story has shown
-        // of them so far: build, background and occupation set the stats (owner, 21 Nov 2026).
-        // Cached per chat revision and cast: it reads every reply for every cast member (package audit, 22 Nov 2026).
-        const sv = this.view();
-        const storyKey = `${chatPrint(this.host.chat())}#${Object.entries(sv.cast).map(([n, c]) => n + (c.stats ? '+' : '')).join('|')}#${Object.keys(sv.cards ?? {}).join('|')}#${(this.host.loreEntries?.() ?? []).length}`;
-        if (this.storyCache?.key !== storyKey) this.storyCache = { key: storyKey, cards: storyCards(sv, this.host.chat(), this.host.narrator(), this.host.loreEntries?.() ?? []) };
-        for (const card of this.storyCache.cards) {
-            const epoch = this.epoch;
-            try {
-                const value = await this.json('profile', profilePrompt({ name: card.name, card: card.text, genre: state.genre, isPlayer: false, story: true }), validateProfile);
-                delete value.people;
-                value.name = card.name;
-                if (!this.view().cast[card.name]) continue; // swiped away while the call ran
-                wrote = this.logSetup(epoch, { kind: 'profile', by: 'setup', name: card.name, value, cardHash: card.hash, lore: true, story: true }) || wrote;
-            } catch (e) {
-                this.cool.profile = Date.now() + COOL_MS;
-                this.fail('profile', e);
-                break;
-            }
-        }
+        this.updateProfileWarning(false, recovered);
         return wrote;
     }
 
+    updateProfileWarning(transportFailed = false, recovered = false) {
+        const failures = [...this.profileFails.values()];
+        const characters = [...new Set(failures.map(failure => failure.name))];
+        const connection = this.profileConnectionFailure;
+        const previous = this.failing.profile;
+        if (!failures.length && !connection) {
+            if (recovered) this.recovered('profile');
+            else if (previous) {
+                delete this.failing.profile;
+                this.host.changed?.('errors');
+            }
+            return;
+        }
+        const issue = connection ?? failures.at(-1).error;
+        const description = connection ? String(issue?.cause?.message ?? issue?.message ?? issue)
+            : characters.join(', ') + ' — ' + String(issue?.message ?? issue);
+        if (!previous || transportFailed || previous.error !== description) {
+            this.fail('profile', new Error(description), null, { characters });
+        }
+    }
+
     async maybePlan(force = null) {
+        const epoch = this.epoch;
         const cfg = this.cfg();
         let state = this.view();
         const reason = force ?? planTrigger(state, cfg) ?? (state.arc ? spineTrigger(state) : null);
@@ -778,29 +939,42 @@ export class Director {
         const anchor = this.latest();
         if (!anchor) return false;
         const anchorHash = hash(anchor.mes);
+        const basis = this.basis(anchor);
         const loreKeys = this.host.loreKeys?.() ?? [];
         const provided = await this.memoryRecord(cfg);
-        const memory = (st) => plannerMemory({ mode: cfg.memory, state: st, entries: scan(this.host.chat(), this.host.narrator()), provided });
+        if (!this.owns(epoch)) return false;
+        const memory = (st) => plannerMemory({ mode: cfg.memory, state: st, entries: this.readings().entries, provided });
         let wrote = false;
         if (!state.arc) {
             const opening = this.host.chat().find(m => m.is_user && !m.is_system)?.mes ?? '';
             const arc = await this.json('planner', arcPrompt({ state, loreKeys, memory: memory(state), opening }), validateArc);
-            if (!this.logOnAnchor(anchor, anchorHash, { kind: 'arc', by: 'director', value: arc })) return false;
+            if (!this.logOnAnchor(epoch, anchor, anchorHash, { kind: 'arc', by: 'director', value: arc, basis })) return false;
             wrote = true;
             state = this.view();
         }
         // The spine follows the arc at once, so the first plan already serves it. A failed draft does not block the plan;
         // the spine step tries again later.
         if (!state.spine) {
-            try { if (await this.ensureSpine()) { wrote = true; state = this.view(); } } catch (e) { this.cool.spine = Date.now() + (e?.transient ? this.transientWait(e.run) : COOL_MS); this.fail('spine', e); if (e?.transient) this.retrySoon(e.run); }
+            try {
+                const changed = await this.ensureSpine();
+                if (!this.owns(epoch)) return false;
+                if (changed) { wrote = true; state = this.view(); }
+            } catch (e) {
+                if (!this.owns(epoch)) return false;
+                this.cool.spine = Date.now() + (e?.transient ? this.transientWait(e.run) : COOL_MS);
+                this.fail('spine', e);
+                if (e?.transient) this.retrySoon(e.run);
+            }
         }
         const drafted = await this.json('planner', planPrompt({ state, loreKeys, reason, memory: memory(state) }), (raw) => validatePlan(raw, state));
+        if (!this.owns(epoch)) return false;
         // Plan check: code flags, and one cheap rewrite call only when something is flagged. Runs here, in the background
         // pass, never in the narrator's path. Beats that still script the player or fight the genre are dropped.
         const ctx = planCheckContext(state, loreKeys);
         const checked = await reviewPlan(drafted, ctx,
             (flags, draft) => this.json('planner-check', planCheckPrompt({ beats: draft.beats, flags, player: ctx.player, genre: ctx.genre, names: ctx.names }), raw => validatePlanRewrites(raw, flags, draft, ctx)),
-            e => this.fail('planner-check', e));
+            e => { if (this.owns(epoch)) this.fail('planner-check', e); });
+        if (!this.owns(epoch)) return false;
         // Nothing left: log nothing (the old queue stays as it was) and let the planner rest before it tries again,
         // so an empty queue cannot set off one planner call per pass.
         if (!checked.plan.beats.length) {
@@ -809,7 +983,7 @@ export class Director {
             return wrote;
         }
         const check = checked.flagged || checked.fixed.length ? { fixed: checked.fixed, rewritten: checked.rewritten, dropped: checked.dropped } : undefined;
-        wrote = this.logOnAnchor(anchor, anchorHash, { kind: 'plan', by: 'director', value: checked.plan, reason, seq: planSeqOn(anchor), ...(check ? { check } : {}) }) || wrote;
+        wrote = this.logOnAnchor(epoch, anchor, anchorHash, { kind: 'plan', by: 'director', value: checked.plan, reason, seq: planSeqOn(anchor), basis, ...(check ? { check } : {}) }) || wrote;
         return wrote;
     }
 
@@ -819,13 +993,15 @@ export class Director {
      */
     async memoryRecord(cfg = this.cfg()) {
         if (memoryMode(cfg.memory) !== 'extension' || !this.host.memoryStory) return null;
+        const epoch = this.epoch;
         let timer;
         try {
             const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('memory extension too slow')), Number(cfg.memoryWait) || MEMORY_MS); });
-            const r = await Promise.race([Promise.resolve().then(() => this.host.memoryStory()), late]);
+            const r = await Promise.race([Promise.resolve().then(() => this.owns(epoch) ? this.host.memoryStory() : null), late]);
+            if (!this.owns(epoch)) return null;
             return r && typeof r === 'object' ? r : (typeof r === 'string' ? { text: r } : null);
         } catch (e) {
-            console.warn('[Narrator Director] memory extension unavailable; planning from the latest replies', e);
+            if (this.owns(epoch)) console.warn('[Narrator Director] memory extension unavailable; planning from the latest replies', e);
             return null;
         } finally {
             clearTimeout(timer);
@@ -834,7 +1010,7 @@ export class Director {
 
     /**
      * The player's safety valve (owner, 21 Nov 2026): a fresh arc from where the story stands, then a fresh spine and
-     * plan. Logged as player edits, so the old arc and spine are replaced, not merged. True when the arc was written.
+     * plan. Report each part that was saved; a later failure leaves earlier successful parts in place.
      */
     async redraftArc() {
         const cfg = this.cfg();
@@ -842,15 +1018,23 @@ export class Director {
         if (!state.genre) return false;
         const epoch = this.epoch;
         const loreKeys = this.host.loreKeys?.() ?? [];
+        const basis = this.basis();
         const provided = await this.memoryRecord(cfg);
-        const memory = plannerMemory({ mode: cfg.memory, state, entries: scan(this.host.chat(), this.host.narrator()), provided });
+        if (!this.owns(epoch)) return false;
+        const memory = plannerMemory({ mode: cfg.memory, state, entries: this.readings().entries, provided });
         const opening = this.host.chat().find(m => m.is_user && !m.is_system)?.mes ?? '';
         const arc = await this.json('planner', arcPrompt({ state, loreKeys, memory, opening, redraft: true }), validateArc);
         const value = { ...arc, act: state.arc?.act ?? arc.act, tension: state.arc?.tension ?? arc.tension };
-        if (!this.logSetup(epoch, { kind: 'edit', by: 'player', path: 'arc', value })) return false;
-        try { await this.ensureSpine(true); } catch (e) { this.fail('spine', e); }
-        await this.maybePlan('the player redrafted the arc: replace every queued opening with a fresh plan from where the story stands');
-        return true;
+        if (!this.logSetup(epoch, { kind: 'edit', by: 'player', path: 'arc', value, basis })) return false;
+        const saved = ['arc'];
+        try {
+            if (await this.ensureSpine(true)) saved.push('spine');
+        } catch (e) { if (this.owns(epoch)) this.fail('spine', e); }
+        if (!this.owns(epoch)) return false;
+        try {
+            if (await this.maybePlan('the player redrafted the arc: replace every queued opening with a fresh plan from where the story stands')) saved.push('plan');
+        } catch (e) { if (this.owns(epoch)) this.fail('planner', e); }
+        return this.owns(epoch) && saved;
     }
 
     /**
@@ -858,12 +1042,13 @@ export class Director {
      * `force` redrafts it (from /director spine), replacing the current one as a player edit.
      */
     async ensureSpine(force = false) {
+        const epoch = this.epoch;
         if (!this.host.material) return false;
         const state = this.view();
         if (!state.genre || !state.arc || (state.spine && !force)) return false;
+        const basis = this.basis();
         const material = await this.host.material();
-        if (!str(material, 50)) return false;
-        const epoch = this.epoch;
+        if (!this.owns(epoch) || !str(material, 50)) return false;
         // Agendas (M1) ride in the same call, rooted in the same material; validated against the cast and the material.
         let agendas = [];
         let value = await this.json('planner', spinePrompt({ material, genre: state.genre, premise: state.premise, arc: state.arc, player: state.meta.player, cast: spineCast(state), settled: playerSettled(state).map(s => s.text), story: force ? [state.summaries.rolled, ...state.summaries.recent.slice(-12).map(s => s.text)].filter(Boolean).join('\n') : '' }), (raw) => {
@@ -871,7 +1056,7 @@ export class Director {
             if (v.ok) agendas = validateAgendas(raw.agendas, state, material);
             return v;
         });
-        if (epoch !== this.epoch) return false;
+        if (!this.owns(epoch)) return false;
         // Check pass: criteria code flags get one cheap rewrite call before the draft is logged. A failed or empty
         // answer leaves the draft as it was: the check never blocks the spine.
         const flagCtx = { present: state.scene.present, player: state.meta.player, location: state.scene.location?.established ? state.scene.location.value : '' };
@@ -879,18 +1064,18 @@ export class Director {
         if (flags.length) {
             try {
                 const rewrites = await this.json('planner', spineCheckPrompt({ spine: value, flags, player: state.meta.player }), raw => validateSpineRewrites(raw, flags, { ...flagCtx, spine: value }));
-                if (epoch !== this.epoch) return false;
+                if (!this.owns(epoch)) return false;
                 value = applySpineRewrites(value, rewrites);
             } catch (e) {
-                if (epoch !== this.epoch) return false;
+                if (!this.owns(epoch)) return false;
                 this.fail('spine-check', e);
             }
         }
         const logged = state.spine
-            ? this.logSetup(epoch, { kind: 'edit', by: 'player', path: 'spine', replace: true, value: { ...emptySpine(), ...value } })
-            : this.logSetup(epoch, { kind: 'spine', by: 'setup', value });
+            ? this.logSetup(epoch, { kind: 'edit', by: 'player', path: 'spine', replace: true, value: { ...emptySpine(), ...value }, basis })
+            : this.logSetup(epoch, { kind: 'spine', by: 'setup', value, basis });
         // A first draft sets the agendas (none is fine); a redraft replaces them only when it brought some.
-        if (logged && (agendas.length || !state.spine)) this.logSetup(epoch, { kind: 'agendas', by: 'setup', value: agendas });
+        if (logged && (agendas.length || !state.spine)) this.logSetup(epoch, { kind: 'agendas', by: 'setup', value: agendas, basis });
         return logged;
     }
 
@@ -899,6 +1084,7 @@ export class Director {
      * logged on the message that resolved it, so swiping or deleting that reply reopens the milestone.
      */
     async maybeConclude() {
+        const epoch = this.epoch;
         const state = this.view({ includeProvisional: false });
         // Due is judged on committed replies, but the conclusion may already sit on the newest reply (provisional until
         // the player answers). Without this check every pass would write the same conclusion again.
@@ -911,8 +1097,10 @@ export class Director {
         const anchor = [...chat].reverse().find(msg => sources.includes(msg.narrator_id)) ?? this.latest();
         if (!anchor) return false;
         const anchorHash = hash(anchor.mes);
+        // A tracker batch can be stored after the reply that resolved the checklist.
+        const basis = this.basis();
         const text = await this.json('summariser', conclusionPrompt({ milestone: m, player: state.meta.player, genre: state.genre, scene: state.scene.location.established ? state.scene.location.value : '' }), validateConclusion);
-        return this.logOnAnchor(anchor, anchorHash, { kind: 'conclusion', by: 'director', milestone: m.id, text });
+        return this.logOnAnchor(epoch, anchor, anchorHash, { kind: 'conclusion', by: 'director', milestone: m.id, text, basis });
     }
 
     async maybeRollUp(force = false) {
@@ -924,10 +1112,12 @@ export class Director {
         const gone = state.summaries.recent.filter(s => s.i < first || s.hidden);
         if (gone.length < (force ? 1 : cfg.rollEvery)) return false;
         const epoch = this.epoch;
+        const basis = this.basis();
         const value = await this.json('summariser', summariserPrompt({ rolled: state.summaries.rolled, summaries: gone.map(s => s.text) }),
             (raw) => (str(raw?.summary) ? { ok: true, value: str(raw.summary, 2000) } : { ok: false, error: 'no summary' }));
+        if (!this.owns(epoch)) return false;
         const prior = this.rolledCovers();
-        return this.logSetup(epoch, { kind: 'rollup', by: 'setup', text: value, covers: [...prior, ...gone.map(s => s.source)] });
+        return this.logSetup(epoch, { kind: 'rollup', by: 'setup', text: value, covers: [...prior, ...gone.map(s => s.source)], basis });
     }
 
     /**
@@ -954,11 +1144,12 @@ export class Director {
         if (!force && !timed && !early) return false;
         if (live.length < 2) return false;
         const epoch = this.epoch;
+        const basis = this.basis();
         const value = await this.json('cleanup', cleanupPrompt({ facts: live }), (raw) => validateCleanup(raw, live));
-        if (epoch !== this.epoch) return false;
+        if (!this.owns(epoch)) return false;
         // Live facts left once this op applies (the validator keeps only live ids, minor retires, no id in two places).
         const left = live.length - value.retire.length - value.merges.reduce((n, mg) => n + mg.ids.length - 1, 0);
-        return this.logSetup(epoch, { kind: 'facts-clean', by: 'setup', merges: value.merges, retire: value.retire, live: left });
+        return this.logSetup(epoch, { kind: 'facts-clean', by: 'setup', merges: value.merges, retire: value.retire, live: left, basis });
     }
 
     /** Live-fact count left by the latest clean-up still in the chat (0 if none, or if it predates the count). */
@@ -978,9 +1169,18 @@ export class Director {
 
     /** A player-made change, logged on the latest message. */
     playerOp(op) {
+        if (!this.owns()) return false;
         this.sync();
         const m = this.latest();
         if (!m) return false;
+        if (op.kind === 'retcon' && op.ids?.length) {
+            const { canon, uncertain } = this.view();
+            const texts = [...canon, ...uncertain].filter(f => op.ids.includes(f.id)).map(f => f.fact);
+            op = { ...op, texts: [...new Set([...arr(op.texts), ...texts])] };
+        }
+        if (op.kind === 'edit' && ['arc', 'spine', 'beats', 'scenes'].includes(op.path)) {
+            op = { ...op, basis: this.basis() };
+        }
         logOp(m, { ...op, by: 'player' });
         this.host.save();
         this.host.changed?.('player');
@@ -989,10 +1189,11 @@ export class Director {
 
     /** Let a failed reply be read again. */
     retry() {
+        if (!this.owns()) return Promise.resolve();
         for (const m of this.host.chat()) { delete m.extra?.narrator?.err; delete m.extra?.narrator?.trackErr; }
         this.errors = [];
         // Failing parts stay listed until they answer again, so the player sees them recover.
-        this.profileFails = {};
+        for (const failure of this.profileFails.values()) failure.attempts = 0;
         this.cool = {};
         this.trackMax = null;
         this.emptyRun = {};

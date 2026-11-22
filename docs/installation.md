@@ -8,7 +8,7 @@
 
 ## 1. Install the extension
 
-1. In SillyTavern, open **Extensions → Install extension**, paste `https://github.com/fadust/agnostic-narrator` and press **Install**. SillyTavern downloads it and can update it later from the same panel.
+1. To install the currently published V2 source, open **Extensions → Install extension** in SillyTavern and enter `https://github.com/fadust/agnostic-narrator-v2`.
 
    Or by hand: download the release zip and copy its `narrator-director` folder to `SillyTavern/public/scripts/extensions/third-party/`. `manifest.json` must sit directly in that folder.
 2. Reload SillyTavern.
@@ -87,11 +87,11 @@ Most updates change the extension, and some change the card or preset. The chang
 | Card | Re-import `dist/Narrator.card.json`, replacing the old card |
 | Preset | Import `Narrator Companion (Mature)` and `Narrator Companion (PG)` (they replace the single `Narrator Companion` preset of 0.2.1 and earlier) and select the one for the story's rating |
 
-Existing chats keep working. Records written by an older version are migrated when the chat is opened.
+Director migrates older record layouts when a chat opens. V2 migration was checked with saved fixture chats.
 
 ## Removing
 
-1. In each narrator group, run `/director off`. This returns the group to a join mode so the cast still reaches the narrator. The extension cannot do this once it has been removed.
+1. In each narrator group, run `/director off` to restore the original generation mode and mute settings that Director changed.
 2. Delete the `narrator-director` folder.
 3. Optionally delete the two lorebook files the director created: `Narrator baseline` and `Narrator dynamic lore`.
 

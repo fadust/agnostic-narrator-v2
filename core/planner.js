@@ -5,6 +5,7 @@ import { SPINE_CAPS, applySpineRewrites, findCriterion, flagSpine, needsNewEndin
 import { awakeThreads } from './state.js';
 import { arr, clamp, clip, isObj, str } from './util.js';
 import { validateRenewals } from './agenda.js';
+import { beatText } from './beat.js';
 
 const strs = (v, max, len = 160) => arr(v).map(x => str(x, len)).filter(Boolean).slice(0, max);
 const pick = (v, list, fallback) => (list.includes(v) ? v : fallback);
@@ -28,10 +29,10 @@ export function validateGenre(raw) {
             promises: strs(raw.promises, 5),
             avoid: strs(raw.avoid, 5),
             stats_focus: strs(raw.stats_focus, 7, 20).filter(s => STATS.includes(s)),
-            // Explicit content is a switch of its own: it can ride on any genre. An erotica label implies it.
+            // Infer explicit content from the genre only when the switch was omitted.
             // PG is the rating switch for the whole story and wins over everything else here.
             pg: raw.pg === true,
-            explicit: raw.pg !== true && (raw.explicit === true || [raw.dominant, ...arr(raw.secondary)].some(g => genreLabel(g) === 'erotica')),
+            explicit: raw.pg !== true && (raw.explicit ?? [raw.dominant, ...arr(raw.secondary)].some(g => genreLabel(g) === 'erotica')) === true,
             confirmed: raw.confirmed === true,
         },
     };
@@ -86,10 +87,9 @@ export function validatePlan(raw, state) {
     // goal: what counts as the beat landing (the record keeper judges by it; the old "intent", kept as its copy).
     // pressure: the opening the narrator is shown. A model answer in the old shape (intent only) still works.
     // The narrator reads these: cut at a sentence end, never mid-word.
-    const goalOf = (b) => clip(str(b.goal) ? b.goal : b.intent, 240);
     let beats = arr(raw.beats).filter(isObj).map(b => ({
         scene: sceneIds.has(b.scene) ? b.scene : (scenes[0]?.id ?? ''),
-        goal: goalOf(b), pressure: clip(b.pressure, 240) || goalOf(b), intent: goalOf(b),
+        ...beatText(b, text => clip(text, 240)),
         precondition: clip(b.precondition, 200),
         type: pick(b.type, BEAT_TYPES, 'pressure'),
         required: b.required === true,
@@ -215,7 +215,7 @@ export function rotate(beats, log) {
  * One character's profile, or, for a card that holds several people, `{ people: [{ name, ...profile }] }`.
  * A "characters" list with fewer than two named, valid entries is read as one character.
  */
-export function validateProfile(raw) {
+export function validateProfile(raw, allowMultiple = true) {
     if (isObj(raw) && Array.isArray(raw.characters)) {
         const seen = new Set();
         const people = [];
@@ -224,7 +224,9 @@ export function validateProfile(raw) {
             const v = name && !seen.has(name.toLowerCase()) ? profileOf(c) : null;
             if (v) { seen.add(name.toLowerCase()); people.push({ name, ...v }); }
         }
-        if (people.length >= 2) return { ok: true, value: { people } };
+        if (people.length >= 2) return allowMultiple
+            ? { ok: true, value: { people } }
+            : { ok: false, error: 'expected a single character profile' };
         if (people.length === 1) return { ok: true, value: people[0] };
         return { ok: false, error: 'no usable character in "characters"' };
     }
@@ -265,7 +267,10 @@ const QUIET_RE = /\b(quiet|quieter|slow|slower|calm|calmer|linger|rest|breathe|b
 const DEVIATION_GAP = 3;
 
 /** The queued openings' words, for telling who a plan centres on. */
-export const queuedBeatText = (state) => arr(state.beats).filter(b => b.status === 'queued').map(b => `${b.goal ?? ''} ${b.intent ?? ''} ${b.pressure ?? ''}`).join(' ');
+export const queuedBeatText = (state) => arr(state.beats).filter(b => b.status === 'queued').map(b => {
+    const { goal, pressure } = beatText(b);
+    return `${goal} ${pressure}`;
+}).join(' ');
 
 export function planTrigger(state, cfg = { cadence: 0 }) {
     if (!state.genre) return null;
