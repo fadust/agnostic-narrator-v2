@@ -13,6 +13,17 @@ export const BRIEF_TOKEN_CAP = 300;
 const LARGE_CAST = 4;
 const RETCON_MEMORY = 8;
 
+const isPlayer = (state, name) => state.cast[name]?.pc || nameKey(name) === nameKey(state.meta.player);
+
+const placeWords = (text) => nameKey(text).replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+const isPlaceClue = (clue) => clue.route === 'place' && !!placeWords(clue.where);
+
+function clueInScene(clue, location, playerMessage) {
+    if (!isPlaceClue(clue) || !location) return true;
+    const place = placeWords(clue.where).replace(/^the /, '');
+    return [location, playerMessage].some(text => ` ${placeWords(text)} `.includes(` ${place} `));
+}
+
 /** Who has had the least of the recent narration. Code only. */
 export function spotlight(state, recentNarration, talkativeness = {}, playerMessage = '') {
     const present = state.scene.present.filter(n => !state.cast[n]?.dead);
@@ -21,6 +32,7 @@ export function spotlight(state, recentNarration, talkativeness = {}, playerMess
     const addressed = nameKey(playerMessage);
     let best = null, bestScore = -Infinity;
     for (const n of present) {
+        if (isPlayer(state, n)) continue;
         const key = n.toLowerCase();
         const first = key.split(' ')[0];
         let mentions = 0;
@@ -89,7 +101,12 @@ export function buildBrief(state, opts = {}) {
     const spot = spotlight(state, recentNarration, talkativeness, playerMessage);
     if (spot) L.spotlight = `${spot} (little attention lately)`;
 
-    const beat = lagging ? null : activeBeat(state);
+    const queued = lagging ? null : activeBeat(state);
+    const clues = arr(queued?.clues).filter(clue => !clue.found);
+    const clue = clues.find(clue => clueInScene(clue, L.location, playerMessage));
+    // Defer conditional beats whose only remaining clues are at a different place.
+    const offScene = queued?.precondition && clues.length && clues.every(isPlaceClue) && !clue;
+    const beat = offScene ? null : queued;
     if (beat) {
         offered.beat = beat.id;
         // The opening the world offers (the beat's pressure), never its goal. Beats stored before W1 have only intent.
@@ -98,15 +115,13 @@ export function buildBrief(state, opts = {}) {
         // Patience: after N replies untouched, the narrator is told once that the opening is still there. Never pressed.
         const nudge = Number(state.meta.nudgeAfter ?? 3);
         if (nudge > 0 && beat.waiting === nudge) L.waiting = 'that opening is still there if the player wants it; let it be noticed once more, lightly, and never press it';
-        const clue = arr(beat.clues).find(c => !c.found);
         if (clue) {
-            offered.clues.push(clue.id);
             L.clue = `${clue.text}${clue.where ? ` (${clue.where})` : ''} (found only through: ${clue.route})`;
         }
     }
     const pressure = pressureLine(state, beat);
     if (pressure) L.tension = pressure;
-    if (sc.initiative === 'world' && !lagging) {
+    if (sc.initiative === 'world' && !lagging && !offScene) {
         const scene = state.scenes.find(s => s.id === beat?.scene) ?? state.scenes[0];
         const next = arr(scene?.if_unchallenged)[0];
         if (next) L.world_moves = next;
@@ -122,7 +137,8 @@ export function buildBrief(state, opts = {}) {
     // An agenda reaches the narrator only as a want on that character's line, while they are present (M1). Never the
     // trigger, never an action.
     const fullOf = (n) => present.length <= LARGE_CAST || n === spot || state.cast[n]?.main || addressed.includes(n.toLowerCase().split(' ')[0]);
-    const castLines = (full, wants) => present.map(n => {
+    const npcs = present.filter(name => !isPlayer(state, name));
+    const castLines = (full, wants) => npcs.map(n => {
         const line = castLine(state, n, full && fullOf(n));
         const want = wants && line ? wantOf(state, n) : '';
         return want ? `${line}; wants: ${want}` : line;
@@ -170,6 +186,7 @@ export function buildBrief(state, opts = {}) {
         L.cast = [...castLines(full, wants), ...(pc && (full || wants) ? [pc] : [])];
         text = wrap(render(L));
     }
+    if (L.clue) offered.clues.push(clue.id);
     const scan = [...present, sc.location.established ? sc.location.value : '', ...loreKeys].filter(Boolean).join('\n');
     return { text, scan, lines: L, fallback: false, lagging, offered };
 }

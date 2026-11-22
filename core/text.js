@@ -27,6 +27,11 @@ export const DIALOGUE_FIXES = [
     { name: 'blank dialogue prefix', pattern: /^([ \t]*(?:\*\*)?[\p{L}\p{M}][\p{L}\p{M}\p{N} .’'-]{0,60}(?:\*\*)?[ \t]*:(?:\*\*)?[ \t]*)["“](?:[ \t]*\x60[ \t]+\x60[ \t]*|[ \t]+)(?=["“]\S[^\r\n"“”]*["”])/gmu },
     // An empty quoted string or blank code span after a finished sentence, before any closing bold markers.
     { name: 'blank dialogue suffix', pattern: /([.!?…])[ \t]+(?:"(?:[ \t]*\x60[ \t]+\x60[ \t]*)?[ \t]*"|“[ \t]*”)(?:[ \t]|&#x20;)*(?=(?:\*\*)?[ \t]*\r?$)/gmu },
+    // An empty spoken cue followed directly by prose. Keep any bold markup around the paragraph.
+    { name: 'blank speaker cue before prose', pattern: /^([ \t]*(?:\*\*)?)[\p{L}\p{M}][\p{L}\p{M}\p{N} .’'-]{0,60}:[ \t]*["“]\x60[ \t]+\x60["”][ \t]+(?=[\p{L}\p{N}])/gmu },
+    { name: 'blank code at line end', pattern: /([.!?…])[ \t]+\x60[ \t]+\x60[ \t]*(?=\r?$)/gm },
+    { name: 'blank code in prose', pattern: /([^\s"“”\\\x60][ \t]+)\x60[ \t]+\x60[ \t]+/g },
+    { name: 'blank code between spoken lines', pattern: /("[^"\r\n]+"|“[^”\r\n]+”)\x60[ \t]+\x60(?=[ \t]+["“])/g },
 ].map(({ name, pattern }) => ({ name, pattern, source: pattern.source, flags: pattern.flags, replacement: '$1' }));
 
 export function cleanDialogue(text) {

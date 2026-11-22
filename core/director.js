@@ -583,9 +583,9 @@ export class Director {
         for (const n of castPeople(before, this.host.castNames?.() ?? [])) {
             if (!before.meta.removedCast.includes(n) && !(n in before.meta.renamedCast)) ensureCast(before, n);
         }
-        const offered = buildBrief(before).offered;
         const player = entry.player;
         const playerMessage = player?.mes ?? '';
+        const offered = buildBrief(before, { playerMessage, tokenCap: this.cfg().briefTokens }).offered;
         const playerBasis = { mid: player?.narrator_id ?? null, revision: player ? activeRevision(player, this.host.narrator()) : null };
         const messages = observerPrompt({ state: before, reply: entry.text, playerMessage, offered });
         const rec = entry.m.extra.narrator;

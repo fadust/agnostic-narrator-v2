@@ -34,12 +34,12 @@ test('both presets own the player rendering rules and the card supplies story co
     assert.equal(card.post_history_instructions, '');
     assert.match(card.description, /Follow the active preset/);
     assert.match(card.description, /## Director notes/);
-    assert.doesNotMatch(card.description, /enhance, enrich and embellish|Aim for .* tokens/);
+    assert.doesNotMatch(card.description, /Narrate the world and everyone else|Aim for .* tokens/);
     for (const label of ['PG', 'Mature']) {
         const prompt = read(`Narrator Companion (${label}).preset.json`).prompts.find(p => p.identifier === 'main').content;
-        assert.match(prompt, /enhance, enrich and embellish/);
-        assert.match(prompt, /changes how it is done/);
-        assert.match(prompt, /no extra action, gift, payment, promise, plan or line of speech/);
+        assert.match(prompt, /Show \{\{user\}\} carrying out the supplied actions in order/);
+        assert.match(prompt, /Carry the meaning of \{\{user\}\}'s speech through dialogue, indirect narration, or a clear response/);
+        assert.doesNotMatch(prompt, /Start each reply with|enhance, enrich and embellish/);
     }
 });
 
@@ -83,6 +83,16 @@ test('empty quotes after a finished sentence are removed while the dialogue and 
     assert.equal(cleanDialogue(`${action} "\x60 \x60 "\n${dialogue} "\x60 \x60 "`), `${action}\n${dialogue}`);
     const ordinary = 'Bianca: "Thank you."\nThe field contains "".\nThe value is ""\n"I left," she said.';
     assert.equal(cleanDialogue(ordinary), ordinary);
+});
+
+test('blank inline code and the empty cue are removed while retaining the prose and markup around them', () => {
+    const keep = '<bbs_start>Evening</bbs_start>\nMira notices a \x60wax seal\x60.';
+    const raw = '**Mira pauses. \x60 \x60 The lamp flickers.**\n\n**Mira: "\x60 \x60" She lowers her eyes.**\n'
+        + '"Keep it."\x60 \x60 "On the counter."\nThe clerk waits. \x60 \x60\n\n' + keep;
+    const expected = '**Mira pauses. The lamp flickers.**\n\n**She lowers her eyes.**\n'
+        + '"Keep it." "On the counter."\nThe clerk waits.\n\n' + keep;
+    assert.equal(cleanDialogue(raw), expected);
+    assert.equal(cleanDialogue(keep), keep);
 });
 
 test('the note stripper removes quoted code wrappers and keeps actual dialogue, spaces and bold', () => {

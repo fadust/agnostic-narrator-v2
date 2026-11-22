@@ -7,7 +7,7 @@ import {
 } from '../../core/plancheck.js';
 import { validatePlan } from '../../core/planner.js';
 import { observerPrompt, planCheckPrompt, planPrompt } from '../../core/prompts.js';
-import { initialState, logOp, reconcile, replay } from '../../core/state.js';
+import { ensureCast, initialState, logOp, reconcile, replay } from '../../core/state.js';
 import { NARRATOR, defaultScript, makeHost, narr, user } from './helpers.mjs';
 
 const ctxOf = (over = {}) => ({ player: 'Max Brenner', criteria: [], names: ['Elsa', 'Piet', 'Max Brenner'], knownText: '', genre: { lethality: 'real', avoid: [] }, time: '', beatLog: [], ...over });
@@ -55,6 +55,32 @@ test('W1: planner and check system texts stay byte-identical between calls (cach
     const b = planCheckPrompt({ beats: [beat('b')], flags: [{ id: 'b1', reasons: ['r2'] }], player: 'Ann', genre: { pg: true }, names: [] });
     assert.equal(a[0].content, b[0].content);
     assert.ok(a[1].content.includes('b1') && a[1].content.includes('r1'));
+});
+
+test('a place-bound beat and clue stay out of an unrelated turn while the player remains in the scene', () => {
+    const state = initialState({ player: 'Max', genre: { dominant: 'fantasy' } });
+    state.scene.present = ['Max', 'Mira'];
+    state.scene.location = { value: 'Greywell Seal Hall', established: true };
+    ensureCast(state, 'Max').pc = true;
+    ensureCast(state, 'Mira');
+    state.beats = [beat('someone notices the well water', 'water from the well tastes bitter', {
+        id: 'well-beat', status: 'queued', precondition: 'someone drinks or draws water',
+        lore: ['secret well lore'], clues: [{ id: 'well-clue', text: 'grey film on the bucket', where: 'the well', route: 'place' }],
+    })];
+
+    const away = buildBrief(state, { playerMessage: 'I slide the empty cup toward Mira.' });
+    assert.equal(away.lines.present, 'Max, Mira');
+    assert.match(away.lines.spotlight, /^Mira/);
+    assert.doesNotMatch(away.text, /Max, toward Max|water tastes bitter|grey film/);
+    assert.doesNotMatch(away.scan, /secret well lore/);
+    assert.deepEqual(away.offered, { beat: null, clues: [] });
+
+    const atWell = buildBrief(state, { playerMessage: 'I draw water from the well.' });
+    assert.match(atWell.lines.scene_intent, /water from the well/);
+    assert.deepEqual(atWell.offered, { beat: 'well-beat', clues: ['well-clue'] });
+    const shortened = buildBrief(state, { playerMessage: 'I draw water from the well.', tokenCap: 40 });
+    assert.equal(shortened.lines.clue, undefined);
+    assert.deepEqual(shortened.offered.clues, []);
 });
 
 test('W3 (a): scripts the player', () => {

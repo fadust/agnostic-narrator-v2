@@ -21,7 +21,7 @@ async function availableLoopbackPort() {
 }
 
 /** ST_DIR supplies host code and installed dependencies. All writes go to a fresh fixture. */
-export async function startFixture(source, extensionRoot, chromium) {
+export async function startFixture(source, extensionRoot, chromium, { username = 'Rowan' } = {}) {
     if (!source || !existsSync(join(source, 'server.js')) || !existsSync(join(source, 'node_modules'))) {
         throw new Error('Set ST_DIR to a SillyTavern checkout with npm dependencies installed.');
     }
@@ -104,7 +104,7 @@ export async function startFixture(source, extensionRoot, chromium) {
         await stopHost();
         const settingsPath = join(dataRoot, 'default-user/settings.json');
         const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
-        Object.assign(settings, { firstRun: false, main_api: 'openai', username: 'Rowan' });
+        Object.assign(settings, { firstRun: false, main_api: 'openai', username });
         Object.assign(settings.oai_settings, {
             chat_completion_source: 'custom', custom_url: `http://127.0.0.1:${mock.port}/v1`,
             custom_model: 'mock', stream_openai: false, openai_max_context: 32000,

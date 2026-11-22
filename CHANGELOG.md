@@ -2,6 +2,12 @@
 
 Newest first. Each entry says which parts changed, so you know what to re-import.
 
+## Unreleased
+
+- PG and Mature ask the narrator to blend the player's visible actions into the scene and convey the meaning of their speech through dialogue, narration, or the other characters' reactions. The Narrator card uses the story profile and scene cues to guide the telling.
+- The Director withholds conditional beats whose remaining place clues are elsewhere. The player stays in the scene while NPC spotlight and relationship lines apply to the supporting cast. Clues removed by the prompt budget are excluded from the clues reported as offered.
+- The extension and card remove blank inline code from dialogue and prose while keeping filled spans. Update the extension, card and both presets together.
+
 # 0.3.0-rc.3 (Agnostic Narrator V2)
 
 - The Director and card remove the enclosing quotes and backticks when stripping an echoed Director block that occupies quoted inline code. The reply cleanup also clears blank quote artifacts already present in the output.

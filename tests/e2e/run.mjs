@@ -187,6 +187,8 @@ await check('turn 1: brief sits just before the player message; story block and 
     assert(briefAt === userAt - 1 && p[briefAt].role === 'system', `brief at ${briefAt}, player at ${userAt}`);
     assert(storyOf(p).includes('genre: fantasy'), 'story block missing');
     assert(text.includes('Fantasy craft:'), 'fantasy craft entry did not fire');
+    assert(text.includes('Use the story profile\'s genre, voice and pace') && text.includes('let the mood shape the details'),
+        'the narrator card lost the guidance for using the story profile and scene');
     assert(!text.includes('Horror craft:') && !text.includes('{{if'), 'ungated or unresolved lore');
     assert((text.match(/<director_notes>\n/g) ?? []).length === 1, 'brief sent more than once');
     assert(String(p[userAt].content).includes(mixedTurn), 'the user dialogue or action was lost in prompt assembly');
@@ -194,9 +196,12 @@ await check('turn 1: brief sits just before the player message; story block and 
         'the selected preset lost its post-history instruction');
     assert(!text.includes('Open differently from your last few replies.'), 'the retired card post-history rule reached the model');
     assert(text.includes('Aim for 700 tokens') && !/\b500 tokens\b/.test(text), 'the preset length was overridden by the card');
-    assert(text.includes('weave both into the same passage') && text.includes('Preserve the player\'s spoken words'),
-        'the card and preset must both require rendering the supplied dialogue and action');
-    assert(presetMain('PG').includes('weave both into the same passage'), 'the PG preset lost the shared instruction');
+    assert((text.match(/carrying out the supplied actions in order/g) ?? []).length === 1,
+        'the prompt must contain one instruction to blend the supplied dialogue and action into the scene');
+    assert(!text.includes('Start each reply with') && !text.includes('Narrate the world and everyone else'),
+        'a retired player-rendering instruction reached the model');
+    assert(presetMain('PG').includes('carrying out the supplied actions in order'),
+        'the PG preset lost the shared instruction');
 });
 await check('the reply is read: quoted facts recorded, the unquoted one rejected, place and cast established', async () => {
     const s = await view();
