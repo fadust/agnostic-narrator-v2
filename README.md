@@ -85,7 +85,7 @@ On a 47-turn test chat the director made about 2.3 calls per turn, or 4 to 5 on 
 
 ## Status
 
-The preset setup above is in development and passed 258 unit tests and 40 browser checks in disposable SillyTavern 1.19.0 with a scripted local model. The [published 0.3.0-rc.1 prerelease](https://github.com/fadust/agnostic-narrator-v2/releases/tag/v0.3.0-rc.1) is documented in its [verification record](docs/v2-verification.md).
+The current candidate is `0.3.0-rc.2`. The preset split passed 258 unit tests and 40 browser checks in disposable SillyTavern 1.19.0 with a scripted local model. The [published 0.3.0-rc.1 prerelease](https://github.com/fadust/agnostic-narrator-v2/releases/tag/v0.3.0-rc.1) is documented in its [verification record](docs/v2-verification.md).
 
 ## Licence
 

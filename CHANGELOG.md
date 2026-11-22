@@ -2,7 +2,7 @@
 
 Newest first. Each entry says which parts changed, so you know what to re-import.
 
-# Unreleased
+# 0.3.0-rc.2 (Agnostic Narrator V2)
 
 - Content guidance lives in two separate presets. PG is for general audiences. Mature allows NSFW and NSFL material where it fits the story.
 - The Director and the Narrator card supply story context. A profile can combine up to four genres, including `smut` or `erotica`, with either preset. Re-import the updated card and companion presets to use the split.
