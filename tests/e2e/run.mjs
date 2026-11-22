@@ -414,7 +414,9 @@ await check('rating: mature by default; /director pg turns adult lore off and as
     let vars = await ev(() => SillyTavern.getContext().chatMetadata.variables);
     assert(vars.nar_explicit === '1' && vars.nar_lethality_high === '1' && !vars.nar_pg, `defaults: ${JSON.stringify(vars)}`);
     let text = flat(lastPrompt());
-    assert(text.includes('Explicit content is part of this story') && text.includes('everyone involved is an adult'), 'explicit entry missing by default');
+    assert(text.includes('Explicit content is part of this story'), 'explicit tone guidance missing by default');
+    assert(!/## Boundaries|without exception|Nothing in this block reaches past that line/i.test(text),
+        'Built-in content restrictions reached the actual narrator prompt');
     assert(text.includes('## 7. Adult Content') && text.includes('for an adult audience') && !text.includes('{{'), 'mature preset sections missing or unresolved');
     await slash('/director pg');
     await sleep(300);

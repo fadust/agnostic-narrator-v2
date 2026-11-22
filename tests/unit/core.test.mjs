@@ -303,7 +303,7 @@ test('explicit content is a switch of its own: set by flag or by an erotica labe
     const smut = flagsOf({ dominant: 'romance', secondary: ['Smut'] });
     assert.equal(smut.nar_explicit, '1');
     assert.equal(smut.nar_genre_erotica, '1');
-    assert.ok(buildStoryBlock({ ...initialState(), genre: validateGenre({ dominant: 'fantasy', explicit: true }).value }).text.includes('explicit sexual content between adults'));
+    assert.match(buildStoryBlock({ ...initialState(), genre: validateGenre({ dominant: 'fantasy', explicit: true }).value }).text, /Use direct detail when it fits the scene/);
     assert.ok(!buildStoryBlock({ ...initialState(), genre: validateGenre({ dominant: 'fantasy' }).value }).text.includes('explicit'));
 });
 

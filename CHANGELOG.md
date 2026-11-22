@@ -2,6 +2,10 @@
 
 Newest first. Each entry says which parts changed, so you know what to re-import.
 
+# Unreleased
+
+- Removed built-in content bans from the Narrator card and presets and removed the planner's content keyword filters. PG, Mature and Explicit continue to convey the selected tone and level of detail. Re-import the Narrator card and your companion preset for the updated prompts.
+
 # 0.3.0-rc.1 (Agnostic Narrator V2)
 
 - Chat switches release pending Director work and isolate World Info, generated openings and Inspector drafts.

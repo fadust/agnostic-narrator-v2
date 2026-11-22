@@ -100,8 +100,9 @@ test('W3 (e): a precondition tied to a time already passed is dropped in code', 
 test('W3 (f): fights the genre', () => {
     assert.match(fightsGenre('the guild sends assassins with modern technology', { avoid: ['modern technology'] }), /avoids/);
     assert.match(fightsGenre('a rival is killed in the square', { lethality: 'none', avoid: [] }), /lethality none/);
-    assert.match(fightsGenre('the two undress by the fire', { pg: true }), /PG/);
-    assert.match(fightsGenre('the two undress by the fire', { pg: false, explicit: false }), /fades to black/);
+    assert.equal(fightsGenre('the two undress by the fire', { pg: true }), '');
+    assert.equal(fightsGenre('the two undress by the fire', { pg: false, explicit: false }), '');
+    assert.equal(fightsGenre('the painter describes gore in a painting', { lethality: 'low' }), '');
     assert.equal(fightsGenre('a rival is killed in the square', { lethality: 'real' }), '');
     assert.equal(fightsGenre('a quiet supper', { pg: true, lethality: 'none', avoid: ['graphic gore'] }), '');
 });

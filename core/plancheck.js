@@ -200,8 +200,6 @@ export function pastPrecondition(pre, now) {
 // ------------------------------------------------------------ (f) fights the genre
 
 const KILLING = /\b(kill|kills|killed|killing|murder\w*|slay|slays|slain|slew|execut(e|es|ed|ion)|assassinat\w*|corpse|dead body)\b/i;
-const GRAPHIC = /\b(gore|gory|disembowel\w*|dismember\w*|tortur\w*|mutilat\w*|bloodbath|entrails)\b/i;
-const SEXUAL = /\b(sex|sexual(ly)?|naked|nude|nudity|undress\w*|erotic|aroused|arousal|orgasm\w*|intercourse|lovemaking|in bed with)\b/i;
 
 /** Does an "avoid" item show up in the text: all its content words (one or two), or at least two of a longer item. */
 // An avoid item is often a note on style ("rushing past the inn and its watchful regulars"). Sharing a word or two with
@@ -221,9 +219,6 @@ export function fightsGenre(text, genre, names = []) {
     const g = isObj(genre) ? genre : {};
     for (const a of arr(g.avoid)) if (touchesAvoid(text, a, names)) return `touches what the story avoids: "${a}"`;
     if (g.lethality === 'none' && KILLING.test(text)) return 'killing or death in a story with lethality none';
-    if (g.pg && (SEXUAL.test(text) || GRAPHIC.test(text))) return 'explicit or graphic content in a PG story';
-    if (!g.pg && g.explicit === false && SEXUAL.test(text)) return 'sexual content in a story where it fades to black';
-    if (g.lethality === 'low' && GRAPHIC.test(text)) return 'graphic violence in a story with low lethality';
     return '';
 }
 

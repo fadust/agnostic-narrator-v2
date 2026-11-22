@@ -58,15 +58,13 @@ Every story has a rating.
 | | Mature (default) | PG |
 | --- | --- | --- |
 | Switch to it | `/director pg off` | `/director pg` |
-| Explicit sexual content | On | Off; scenes stop at the closed door |
+| Intimacy | Direct detail when it fits | Implied, up to the closed door |
 | Lethality | High | The story's own level |
-| Graphic violence, slurs | Allowed | Off |
+| Tone | Adult audience | General audience |
 
 - The default for new stories is **Content rating for new stories** in the extension settings.
 - `/director explicit off` keeps a mature story but fades to black on sex.
-- At either rating, everyone in a sexual scene is an adult, and a character of unclear age is treated as a minor. Nothing overrides this.
-
-The rating reaches the narrator through the card's craft entries and through the companion preset, which swaps its content sections on the same switch.
+The card's craft entries and the matching companion preset convey these tone preferences. Content decisions follow the selected model.
 
 Mature sets lethality to high for every story. For a gentle story, rate it PG or lower `lethality` in the story profile.
 

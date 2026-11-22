@@ -214,7 +214,7 @@ export function mountUi(api) {
             ${MODULES.map(m => `<label class="nd-row"><span>${h(MODULE_LABELS[m])}</span><input type="number" min="100" step="50" class="text_pole nd-num" data-nd-token="${m}" value="${Number(s.tokens?.[m])}"></label>`).join('')}
 
             <h4>Story</h4>
-            ${sel('nd-rating', 'Content rating for new stories', s.rating, [['mature', 'Mature'], ['pg', 'PG']], 'Mature: explicit content on and lethality high. PG: adult content off. Change one story on the inspector\'s Now tab.')}
+            ${sel('nd-rating', 'Content rating for new stories', s.rating, [['mature', 'Mature'], ['pg', 'PG']], 'Mature requests explicit detail and high lethality. PG requests a general-audience tone. Change one story on the inspector\'s Now tab.')}
             ${sel('nd-placement', 'Where the notes go', s.placement, [['auto', 'Automatic'], ['depth', 'Before your last message'], ['system', 'In the system prompt'], ['macro', 'Only where {{director_notes}} is']], 'Automatic: a {{director_notes}} preset entry if one is enabled; otherwise before your last message, or in the system prompt for Claude and Gemini.')}
             ${num('cadence', 'Re-plan every N turns', '0 (the default) means on events only: the planner runs when the openings run out, when you go elsewhere, when the scene stalls, when the story drifts, and on request. A timed re-plan can replace an opening you were about to take.')}
             ${num('nudgeAfter', 'Nudge a waiting opening after N turns', 'An opening offered this many turns without being taken is mentioned to the narrator once more, as still there; never pressed. It is retired two turns later (five later if the plan needs it). Going elsewhere counts as passing it by, not waiting. 0 means never nudge.')}
@@ -313,7 +313,7 @@ export function mountUi(api) {
                 <div class="nd-field"><span>Rating</span><div class="nd-seg">
                     <button type="button" class="menu_button ${pg ? '' : 'nd-on'}" data-act="rating" data-value="mature" aria-pressed="${!pg}">Mature</button>
                     <button type="button" class="menu_button ${pg ? 'nd-on' : ''}" data-act="rating" data-value="pg" aria-pressed="${pg}">PG</button>
-                    <small>${pg ? 'Adult content is off.' : s.genre?.explicit ? 'Explicit content is on.' : 'Explicit content is off.'}</small></div></div>
+                    <small>${pg ? 'General-audience tone requested.' : s.genre?.explicit ? 'Explicit content is on.' : 'Explicit content is off.'}</small></div></div>
                 <div class="nd-field"><span>Progress</span><div>Turn ${s.meta.turn} · ${s.canon.length} facts on record${total ? ` · ${Math.round(100 * s.meta.rejected / total)}% of proposed changes refused` : ''}${s.meta.lagging ? ' · <span class="nd-warn">the latest reply is not read yet</span>' : ''}</div></div>
                 ${g ? `<div class="nd-field"><span>Group</span><div>${h(GROUP_MODES[g.mode] ?? g.mode)} · ${g.cast} cast · ${g.muted} muted ${button('setup', 'Mute the cast so only the narrator speaks')}</div></div>` : ''}
                 <div class="nd-field"><span>Notes are placed</span><div>${h({ depth: 'before your last message', system: 'in the system prompt', macro: 'where the preset has {{director_notes}}' }[b.placement] ?? b.placement)}</div></div>
@@ -368,7 +368,7 @@ export function mountUi(api) {
                     ${field('In brief', area('profile', c.profile, 2, 'who they are and how they speak'))}
                     ${field('Gender', text('gender', c.gender))}
                     ${field('Race', text('race', c.race, 'human if unstated'))}
-                    ${field('Age group', select('age_group', c.age_group ?? '', ['', ...AGE_GROUPS]), 'Empty means unclear. The card\'s rule on minors goes by how someone is described, whatever this says.')}
+                    ${field('Age group', select('age_group', c.age_group ?? '', ['', ...AGE_GROUPS]), 'Leave empty if unspecified.')}
                     ${field('Appearance', area('appearance', c.appearance, 2, 'build, hair, eyes, marks, usual clothing'), 'Gender, race, age group and appearance are anchors: sent to the narrator while they are in the scene, so they stay the same. The story never changes them. Clear one to take it from the card again.')}
                     ${c.pc ? '' : `
                     ${field('Temperament', select('temperament', c.temperament ?? 'reserved', TEMPERAMENTS), 'Decides their behaviour wherever a line below is left empty.')}

@@ -247,7 +247,7 @@ function checkPresetRating() {
     const c = ctx();
     if (c.mainApi !== 'openai') return;
     const main = String((c.chatCompletionSettings?.prompts ?? []).find(p => p.identifier === 'main')?.content ?? '');
-    const kind = main.includes('## 7. Adult Content') ? 'Mature' : main.includes('slurs and graphic profanity are not') ? 'PG' : '';
+    const kind = main.includes('## 7. Adult Content') ? 'Mature' : main.includes('This story is rated PG.') ? 'PG' : '';
     if (!kind) return;
     const pg = !!director.readView().genre?.pg;
     const want = pg ? 'PG' : 'Mature';
@@ -857,7 +857,7 @@ async function runDirectorCommand(text, epoch) {
             const genre = director.view().genre;
             if (!genre) return 'The story profile is not ready yet.';
             if (!await confirmGenre(applyRating(genre, off ? 'mature' : 'pg'))) return 'The rating could not be saved.';
-            return off ? 'Mature rating: explicit content on, lethality high. Select the "Narrator Companion (Mature)" preset.' : 'PG rating: adult content is off for this story. Select the "Narrator Companion (PG)" preset.';
+            return off ? 'Mature rating: explicit content on, lethality high. Select the "Narrator Companion (Mature)" preset.' : 'PG rating: general-audience tone requested. Select the "Narrator Companion (PG)" preset.';
         }
         case 'explicit': {
             if (rest && !/^(on|off|no|yes|true|false|0|1)$/i.test(rest)) return 'Use /director explicit on or /director explicit off.';
@@ -1028,7 +1028,7 @@ function registerCommand() {
 <li><code>/director beats: a rival appears; the storm breaks</code></li>
 <li><code>/director rewrite: less dialogue</code> – redo the latest reply as a new swipe</li>
 <li><code>/director retcon: the letter was burned</code></li>
-<li><code>/director pg</code> – rate this story PG: all adult content off (<code>/director pg off</code> returns to mature); pair it with the matching companion preset, PG or Mature</li>
+<li><code>/director pg</code> – request a general-audience tone (<code>/director pg off</code> returns to mature). Pair it with the matching companion preset.</li>
 <li><code>/director explicit off</code> – keep the mature rating but fade to black on sex</li>
 <li><code>/director redraft</code> – a fresh arc, spine and plan from where the story stands, when the story feels stuck</li>
 <li><code>/director settle &lt;text&gt;</code> – close a matter so the story stops pressing it; <code>/director unsettle</code> lists and reopens</li>

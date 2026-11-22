@@ -15,7 +15,7 @@ All commands begin with `/director`. Anything that is not a keyword is a free-te
 | `/director beats: one; two` | Queue beats ahead of the plan, separated by semicolons |
 | `/director rewrite: <instruction>` | Redo the latest reply as a new swipe, with the instruction |
 | `/director retcon: <text>` | Remove facts containing the text, or closely matching it, and tell the narrator it did not happen |
-| `/director pg` | Rate this story PG: adult content off |
+| `/director pg` | Request a general-audience tone |
 | `/director pg off` | Return this story to mature: explicit on, lethality high |
 | `/director explicit on` / `off` | Within a mature story, write sex scenes or fade to black |
 | `/director profile` | Draft the story profile again |

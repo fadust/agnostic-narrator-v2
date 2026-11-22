@@ -101,7 +101,7 @@ Source: \`core/\`. No prompt can override these.
 | A late director does not steer | Notes built before the newest reply was read carry no intent, clue or correction (\`brief.js\`) |
 | Private state stays private | Plans, clues, beliefs and canon are never written to chat variables (\`vars.js\`) |
 | Code never kills a character | A serious untreated condition worsens once, to critical; mild ones never worsen on their own (\`state.js\`) |
-| PG wins | A story rated PG has explicit content off whatever its genre label says (\`planner.js\`) |
+| PG tone | PG selects general-audience guidance and clears the Explicit flag (\`planner.js\`) |
 `;
 }
 

@@ -234,8 +234,8 @@ export function buildStoryBlock(state, opts = {}) {
     };
     const g = state.genre;
     if (g) {
-        const stance = g.pg ? 'PG. No explicit sex, no graphic gore, no slurs; danger and death are real but not dwelt on'
-            : g.explicit ? 'Mature. This story allows explicit sexual content between adults.'
+        const stance = g.pg ? 'PG. Aim for a general-audience tone. Give danger and death weight through their consequences.'
+            : g.explicit ? 'Mature. Use direct detail when it fits the scene.'
                 : 'Mature. Keep intimacy at the closed door.';
         add(`Rating: ${stance}`);
     }
