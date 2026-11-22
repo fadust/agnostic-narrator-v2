@@ -123,6 +123,22 @@ try {
     assert.doesNotMatch(history, /\x60[ \t]+\x60/);
     assert.ok(history.includes(filled));
     console.log('PASS markup: 5 blank spans removed in save, render, copy, and next prompt. The filled code span survived.');
+
+    const historical = 'Mira: "I heard you." \x60 \x60 "Say the sentence."\n\nShe notices a \x60wax seal\x60.';
+    const kept = await page.evaluate((text) => {
+        const c = SillyTavern.getContext();
+        // Repaint an older group reply with no scoped card rule available.
+        c.characters.find(ch => ch.name === 'Narrator').data.extensions.regex_scripts = [];
+        const id = c.chat.length - 1;
+        c.chat[id].mes = text;
+        c.updateMessageBlock(id, c.chat[id]);
+        return c.chat[id].mes;
+    }, historical);
+    assert.equal(kept, historical, 'the rendering hook must leave saved text unchanged');
+    const historicalReply = page.locator('#chat .mes').last().locator('.mes_text');
+    assert.deepEqual(await historicalReply.locator('code').allTextContents(), ['wax seal']);
+    assert.match(await historicalReply.innerText(), /I heard you.*Say the sentence/);
+    console.log('PASS historical group markup: removed the blank span at display time without rewriting the reply.');
 } finally {
     await close();
 }

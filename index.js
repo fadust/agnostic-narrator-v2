@@ -11,7 +11,7 @@ import { DYNAMIC_WORLD, toWorldInfoEntry } from './core/lore.js';
 import { validateGenre } from './core/planner.js';
 import { openingPrompt, premisePrompt, revisePrompt } from './core/prompts.js';
 import { castPeople, classify } from './core/state.js';
-import { cleanDialogue, FALLBACK_NOTE, hasLeak, parseTags, stripDirector } from './core/text.js';
+import { cleanDialogue, cleanSpokenLineGap, FALLBACK_NOTE, hasLeak, parseTags, stripDirector } from './core/text.js';
 import { clone, similarity, str } from './core/util.js';
 import { clearVars, publicVars, writeVars } from './core/vars.js';
 import { makeCall } from './st/call.js';
@@ -400,6 +400,13 @@ function onGenerationDone() {
     const n = Number(ctx().substituteParams('{{firstIncludedMessageId}}'));
     if (Number.isFinite(n)) firstIncluded = n;
     if (narratorRef()) { director.sync(); scheduleKick(); }
+}
+
+/** Apply the dialogue gap rule to saved replies even when card regexes are unavailable in a group. */
+function formatSavedDialogue(text, { messageId, isUser, isSystem, isReasoning }) {
+    if (isUser || isSystem || isReasoning || !text.includes('\x60')) return text;
+    const message = ctx().chat[messageId];
+    return message && classify(message, narratorRef()) === 'narration' ? cleanSpokenLineGap(text) : text;
 }
 
 /** Clean generated replies before the recorder or the next narrator prompt sees them. */
@@ -1004,6 +1011,8 @@ function registerCommand() {
 (function init() {
     const c = ctx();
     loadSettings();
+    const formatter = c.messageFormatter;
+    formatter?.addHook(formatSavedDialogue, { stage: formatter.stage.BEFORE_REGEX });
     registerMacro();
     registerCommand();
     const E = c.eventTypes, on = (ev, fn) => ev && c.eventSource.on(ev, fn);

@@ -22,6 +22,12 @@ export function stripDirector(text) {
     return replaceMatches(text, LEAK_PATTERNS).trim();
 }
 
+const BLANK_BETWEEN_SPOKEN_LINES = /("[^"\r\n]+"|“[^”\r\n]+”)[ \t]*\x60[ \t]+\x60(?=[ \t]+["“])/g;
+
+export function cleanSpokenLineGap(text) {
+    return text.replace(BLANK_BETWEEN_SPOKEN_LINES, '$1');
+}
+
 export const DIALOGUE_FIXES = [
     // A blank quoted prefix immediately before real dialogue on a speaker line.
     { name: 'blank dialogue prefix', pattern: /^([ \t]*(?:\*\*)?[\p{L}\p{M}][\p{L}\p{M}\p{N} .’'-]{0,60}(?:\*\*)?[ \t]*:(?:\*\*)?[ \t]*)["“](?:[ \t]*\x60[ \t]+\x60[ \t]*|[ \t]+)(?=["“]\S[^\r\n"“”]*["”])/gmu },
@@ -31,7 +37,7 @@ export const DIALOGUE_FIXES = [
     { name: 'blank speaker cue before prose', pattern: /^([ \t]*(?:\*\*)?)[\p{L}\p{M}][\p{L}\p{M}\p{N} .’'-]{0,60}:[ \t]*["“]\x60[ \t]+\x60["”][ \t]+(?=[\p{L}\p{N}])/gmu },
     { name: 'blank code at line end', pattern: /([.!?…])[ \t]+\x60[ \t]+\x60[ \t]*(?=\r?$)/gm },
     { name: 'blank code in prose', pattern: /([^\s"“”\\\x60][ \t]+)\x60[ \t]+\x60[ \t]+/g },
-    { name: 'blank code between spoken lines', pattern: /("[^"\r\n]+"|“[^”\r\n]+”)[ \t]*\x60[ \t]+\x60(?=[ \t]+["“])/g },
+    { name: 'blank code between spoken lines', pattern: BLANK_BETWEEN_SPOKEN_LINES },
 ].map(({ name, pattern }) => ({ name, pattern, source: pattern.source, flags: pattern.flags, replacement: '$1' }));
 
 export function cleanDialogue(text) {
