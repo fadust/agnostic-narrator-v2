@@ -106,8 +106,8 @@ try {
 
     await newGroup('Blank code');
     const filled = 'a `wax seal`';
-    const raw = `**Mira pauses. \` \` The lamp flickers.**\n\n**Mira: "\` \`" She lowers her eyes.**\n\n"Keep it."\` \` "On the counter."\nThe clerk waits. \` \`\n\nShe notices ${filled}.\n\n<bbs_start>Evening</bbs_start>`;
-    const cleaned = `**Mira pauses. The lamp flickers.**\n\n**She lowers her eyes.**\n\n"Keep it." "On the counter."\nThe clerk waits.\n\nShe notices ${filled}.\n\n<bbs_start>Evening</bbs_start>`;
+    const raw = `**Mira pauses. \` \` The lamp flickers.**\n\n**Mira: "\` \`" She lowers her eyes.**\n\n"Keep it."\` \` "On the counter."\n"I heard you." \` \` "Say the sentence."\nThe clerk waits. \` \`\n\nShe notices ${filled}.\n\n<bbs_start>Evening</bbs_start>`;
+    const cleaned = `**Mira pauses. The lamp flickers.**\n\n**She lowers her eyes.**\n\n"Keep it." "On the counter."\n"I heard you." "Say the sentence."\nThe clerk waits.\n\nShe notices ${filled}.\n\n<bbs_start>Evening</bbs_start>`;
     const { request, saved } = await send('I wait for the clerk.', raw);
     assert.equal(request.response, raw, 'the scripted endpoint sent the same raw reply');
     assert.equal(saved.text, cleaned);
@@ -122,7 +122,7 @@ try {
     const history = next.request.messages.filter(m => m.role === 'assistant').map(m => m.content).join('\n');
     assert.doesNotMatch(history, /\x60[ \t]+\x60/);
     assert.ok(history.includes(filled));
-    console.log('PASS markup: 4 blank spans removed in save, render, copy, and next prompt. The filled code span survived.');
+    console.log('PASS markup: 5 blank spans removed in save, render, copy, and next prompt. The filled code span survived.');
 } finally {
     await close();
 }

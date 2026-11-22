@@ -88,9 +88,9 @@ test('empty quotes after a finished sentence are removed while the dialogue and 
 test('blank inline code and the empty cue are removed while retaining the prose and markup around them', () => {
     const keep = '<bbs_start>Evening</bbs_start>\nMira notices a \x60wax seal\x60.';
     const raw = '**Mira pauses. \x60 \x60 The lamp flickers.**\n\n**Mira: "\x60 \x60" She lowers her eyes.**\n'
-        + '"Keep it."\x60 \x60 "On the counter."\nThe clerk waits. \x60 \x60\n\n' + keep;
+        + '"Keep it."\x60 \x60 "On the counter."\n"I heard you." \x60 \x60 "Say the sentence."\nThe clerk waits. \x60 \x60\n\n' + keep;
     const expected = '**Mira pauses. The lamp flickers.**\n\n**She lowers her eyes.**\n'
-        + '"Keep it." "On the counter."\nThe clerk waits.\n\n' + keep;
+        + '"Keep it." "On the counter."\n"I heard you." "Say the sentence."\nThe clerk waits.\n\n' + keep;
     assert.equal(cleanDialogue(raw), expected);
     assert.equal(cleanDialogue(keep), keep);
 });

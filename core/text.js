@@ -31,7 +31,7 @@ export const DIALOGUE_FIXES = [
     { name: 'blank speaker cue before prose', pattern: /^([ \t]*(?:\*\*)?)[\p{L}\p{M}][\p{L}\p{M}\p{N} .’'-]{0,60}:[ \t]*["“]\x60[ \t]+\x60["”][ \t]+(?=[\p{L}\p{N}])/gmu },
     { name: 'blank code at line end', pattern: /([.!?…])[ \t]+\x60[ \t]+\x60[ \t]*(?=\r?$)/gm },
     { name: 'blank code in prose', pattern: /([^\s"“”\\\x60][ \t]+)\x60[ \t]+\x60[ \t]+/g },
-    { name: 'blank code between spoken lines', pattern: /("[^"\r\n]+"|“[^”\r\n]+”)\x60[ \t]+\x60(?=[ \t]+["“])/g },
+    { name: 'blank code between spoken lines', pattern: /("[^"\r\n]+"|“[^”\r\n]+”)[ \t]*\x60[ \t]+\x60(?=[ \t]+["“])/g },
 ].map(({ name, pattern }) => ({ name, pattern, source: pattern.source, flags: pattern.flags, replacement: '$1' }));
 
 export function cleanDialogue(text) {

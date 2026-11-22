@@ -645,7 +645,7 @@
         {
           "id": "nd-regex-35",
           "scriptName": "Narrator: remove blank code between spoken lines",
-          "findRegex": "/(\"[^\"\\r\\n]+\"|“[^”\\r\\n]+”)\\x60[ \\t]+\\x60(?=[ \\t]+[\"“])/g",
+          "findRegex": "/(\"[^\"\\r\\n]+\"|“[^”\\r\\n]+”)[ \\t]*\\x60[ \\t]+\\x60(?=[ \\t]+[\"“])/g",
           "replaceString": "$1",
           "trimStrings": [],
           "placement": [
@@ -662,7 +662,7 @@
         {
           "id": "nd-regex-36",
           "scriptName": "Narrator: hide blank code between spoken lines",
-          "findRegex": "/(\"[^\"\\r\\n]+\"|“[^”\\r\\n]+”)\\x60[ \\t]+\\x60(?=[ \\t]+[\"“])/g",
+          "findRegex": "/(\"[^\"\\r\\n]+\"|“[^”\\r\\n]+”)[ \\t]*\\x60[ \\t]+\\x60(?=[ \\t]+[\"“])/g",
           "replaceString": "$1",
           "trimStrings": [],
           "placement": [
