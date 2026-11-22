@@ -51,22 +51,16 @@ At the start of a chat the director reads your material and drafts a profile: ge
 
 Review it in the inspector's **Story** tab. Edit and save, or leave it: it counts as accepted once you start playing. `/director profile` drafts it again.
 
-## Content rating
+Choose a primary genre and enter up to three secondary genres in **Also**, separated by commas. For example, use **Romance** as the primary genre and **Mystery, Smut** as secondary genres. Director recognizes **Smut** as **Erotica**. The same profile works with either preset.
 
-Every story has a rating.
+## Content presets
 
-| | Mature (default) | PG |
-| --- | --- | --- |
-| Switch to it | `/director pg off` | `/director pg` |
-| Intimacy | Direct detail when it fits | Implied, up to the closed door |
-| Lethality | High | The story's own level |
-| Tone | Adult audience | General audience |
+Select a companion preset in **AI Response Configuration**.
 
-- The default for new stories is **Content rating for new stories** in the extension settings.
-- `/director explicit off` keeps a mature story but fades to black on sex.
-The card's craft entries and the matching companion preset convey these tone preferences. Content decisions follow the selected model.
+- **Narrator Companion (PG)** uses a general-audience tone, with non-graphic violence and implied intimacy.
+- **Narrator Companion (Mature)** allows NSFW and NSFL material where it fits the story. The selected model decides the level of detail.
 
-Mature sets lethality to high for every story. For a gentle story, rate it PG or lower `lethality` in the story profile.
+Both presets use the story's existing genre mix, stakes and lethality. Content settings are in the preset.
 
 ## Talking to the director
 

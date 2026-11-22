@@ -24,8 +24,8 @@ Start with the inspector (`/director inspect`). **Now** shows what the narrator 
 | She mentions the notes or a director | A leak. It is stripped from the saved reply | If it shows, check that the card's regex scripts are allowed |
 | She answers the notes as if you wrote them | The notes merged with your message | Set **Where the notes go** to **In the system prompt** |
 | She writes your character's actions | A narrator-model habit | Edit the reply; the rule is in the card. A stronger narrator model helps most |
-| Explicit scenes fade to black | The story is PG, explicit is off, or the model declines | `/director pg off`. If flags are right, it is the model or backend |
-| A gentle story turns deadly | Mature sets lethality to high | `/director pg`, or lower **Lethality** on the **Story** tab |
+| Intimacy is implied | The selected preset or model may prefer implication | Check the active preset in **AI Response Configuration**. Mature permits explicit detail where the model supports it |
+| A gentle story turns deadly | The story profile has high lethality | Check **Lethality** on the **Story** tab |
 
 ## The record
 

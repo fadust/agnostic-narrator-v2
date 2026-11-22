@@ -4,7 +4,7 @@ import { buildBrief } from './brief.js';
 import { extractJson } from './json.js';
 import { buildLorebook } from './lore.js';
 import { memoryMode, plannerMemory } from './memory.js';
-import { applyRating, planTrigger, queuedBeatText, validateArc, validateConclusion, validateGenre, validatePlan, validateProfile, validateSpine, validateSpineRewrites } from './planner.js';
+import { planTrigger, queuedBeatText, validateArc, validateConclusion, validateGenre, validatePlan, validateProfile, validateSpine, validateSpineRewrites } from './planner.js';
 import { arcPrompt, cleanupPrompt, conclusionPrompt, genrePrompt, observerPrompt, planPrompt, profilePrompt, spineCheckPrompt, spinePrompt, summariserPrompt, trackCheckPrompt, trackerPrompt } from './prompts.js';
 import { applySpineRewrites, emptySpine, findCriterion, flagSpine, needsConclusion, spineIds, spineTrigger } from './spine.js';
 import { activeRevision, castPeople, ensureCast, logOp, playerSettled, rawTextHash, reconcile, replay, scan, storyBasis, visibleText } from './state.js';
@@ -818,10 +818,9 @@ export class Director {
         if (!this.owns(epoch) || !str(material, 50)) return false;
         const drafted = await this.json('genre', genrePrompt({ material }), validateGenre);
         if (!this.owns(epoch)) return false;
-        // A re-run keeps the content choices already set for the story.
-        const current = setup.genre && this.view().genre;
-        const value = current ? { ...drafted, pg: current.pg, explicit: current.explicit, lethality: current.lethality }
-            : applyRating(drafted, this.cfg().rating ?? 'mature');
+        // Preserve the existing story stakes when re-profiling an active story.
+        const lethality = setup.genre && this.readView().genre?.lethality;
+        const value = lethality ? { ...drafted, lethality } : drafted;
         const m = this.latest();
         if (force && setup.genre && m) logOp(m, { kind: 'genre', by: 'setup', value });
         else this.host.setSetup({ genre: value });

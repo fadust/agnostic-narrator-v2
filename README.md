@@ -2,7 +2,7 @@
 
 A genre-agnostic narrator for SillyTavern, run by two models. A **narrator card** writes the story. A **director extension** keeps the record, plans ahead and gives the narrator one short note each turn. The chat shows only narration.
 
-Needs SillyTavern 1.19.0 or later, with its newer macro engine; the card and presets use `{{if}}` blocks. No other extension is required.
+Needs SillyTavern 1.19.0 or later. The card uses the macro engine for genre guidance.
 
 ## What you get
 
@@ -14,7 +14,7 @@ Needs SillyTavern 1.19.0 or later, with its newer macro engine; the card and pre
 - **Characters who remember what you did.** Feelings move with deeds, not words. Each character keeps wants of their own. A person known only by a role ("the hall master") becomes a character once they speak, and keeps the role as another name when their own name comes out.
 - **Your own character, profiled from your persona and your lorebook entry.** An S-class fighter written in lore is not treated as an ordinary person.
 - **Settled stays settled.** When you answer something for good, or have had enough of it, the director stops pressing it (`/director settle`). `/director redraft` rebuilds the arc and spine from where the story stands.
-- **A content rating.** Mature by default; `/director pg` makes a story PG. Two companion presets match the two ratings, and the director warns if the wrong one is selected.
+- **Two companion presets.** PG is for a general audience. Mature allows NSFW and NSFL material when the story calls for it. The Director and Narrator card work with either preset.
 - **Failures you can see.** If a part of the director fails, you get a toast saying what failed and what to do. A dot appears on the Director menu entry, and a banner with Retry appears in the inspector. Another toast tells you when it works again.
 - **An inspector.** Seven plain tabs with forms: see and change the scene, the cast, the story profile, the plan and the record, and read what each director call was sent and answered.
 
@@ -24,7 +24,7 @@ Needs SillyTavern 1.19.0 or later, with its newer macro engine; the card and pre
    - **Lean:** open the V2 release ZIP and put its `narrator-director` folder in `SillyTavern/public/scripts/extensions/third-party/`.
    - **From the repository:** in **Extensions → Install extension**, paste `https://github.com/fadust/agnostic-narrator-v2` to install the currently published source.
 2. Import `Narrator.card.json` as a character, and allow its regex scripts when asked.
-3. Import both companion presets, **Narrator Companion (Mature)** and **Narrator Companion (PG)**. Select the one that matches your story's rating; Mature is the default.
+3. Import **Narrator Companion (PG)** and **Narrator Companion (Mature)**. Choose either preset in AI Response Configuration.
 4. Optional: import `Narrator Director.quickreplies.json` for buttons.
 5. Open a chat with the Narrator and say where the story begins.
 
@@ -43,7 +43,6 @@ A few commands you will use most (all of them: [docs/reference.md](docs/referenc
 | `/director settle <text>` | Close a matter for good: no one presses it again |
 | `/director redraft` | A fresh arc and spine from where the story stands |
 | `/director retcon: <text>` | Undo a fact. Use `!` to confirm a broad match |
-| `/director pg` / `pg off` | PG or mature rating for this story |
 | `/director retry` | Try failed director calls again now |
 
 ## Cost

@@ -48,8 +48,6 @@ test('every shipped quick reply still selects its Director action', () => {
         'Re-plan': ['replan', ''],
         'Story profile': ['profile', ''],
         Opening: ['opening', ''],
-        PG: ['pg', ''],
-        Mature: ['pg', 'off'],
         'Dump state': ['dump', ''],
     };
     assert.deepEqual(qrList.map(reply => reply.label).sort(), Object.keys(expected).sort());

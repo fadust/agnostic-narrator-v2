@@ -233,12 +233,6 @@ export function buildStoryBlock(state, opts = {}) {
         left -= cost(text);
     };
     const g = state.genre;
-    if (g) {
-        const stance = g.pg ? 'PG. Aim for a general-audience tone. Give danger and death weight through their consequences.'
-            : g.explicit ? 'Mature. Use direct detail when it fits the scene.'
-                : 'Mature. Keep intimacy at the closed door.';
-        add(`Rating: ${stance}`);
-    }
     const undone = state.tombstones.slice(-5).map(t => `- ${t.fact}`);
     if (undone.length) add(`Disregard, these did not happen:\n${undone.join('\n')}`, `Disregard: ${undone.at(-1).slice(2)}`);
     const present = new Set(state.scene.present);

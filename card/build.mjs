@@ -34,9 +34,7 @@ const CRAFT = [
     ['nar_genre_comedy', 'Comedy', 'Comedy craft: humour comes from character and timing, not from the narrator winking. Let people be serious about absurd things. Set up, then pay off later. Keep stakes light but real to the characters, and never mock the player.'],
     ['nar_genre_drama', 'Drama', 'Drama craft: conflict is between people who each have a point. Let scenes turn on a decision or an admission. Subtext over statement; consequences persist. Give silence and small gestures as much room as speech.'],
     ['nar_genre_adventure', 'Adventure', 'Adventure craft: keep things moving through places worth seeing. Obstacles have more than one way past. Give victories a price and setbacks a way forward, and let each new place change what the travellers know or carry.'],
-    ['nar_genre_erotica', 'Erotica', 'Erotica craft: desire is the plot. Build it through anticipation, attention and what each person wants and fears, so that intimacy changes something between them. Keep every character fully themselves in bed: their voice, their pride, their hesitations. Scenes need shape (approach, escalation, aftermath), and the aftermath matters as much as the act.'],
-    ['nar_explicit', 'Explicit content', 'Explicit content is part of this story. Where intimate scenes fit, write in the story\'s own register. Characters act on their own desire: they may lead, ask, steer, lose interest or refuse, as who they are and how they stand toward the player dictate. Never write the player character\'s actions, words or feelings for them, and when the player ends or turns a scene, it ends or turns.'],
-    ['nar_pg', 'PG rating', 'This story is rated PG. Aim for a general-audience tone. Suggest intimacy up to the closed door and convey violence through its impact on the characters. Preserve the story\'s stakes, conflicts and consequences.'],
+    ['nar_genre_erotica', 'Erotica', 'Erotica craft: character motives, choices and relationships shape the scene. How a scene changes a relationship can matter as much as the scene itself.'],
     ['nar_lethality_none', 'No lethality', 'In this story nobody dies and nothing irreparable happens on screen. Setbacks are social, emotional or practical.'],
     ['nar_lethality_high', 'High lethality', 'In this story death is possible for anyone, including people the player cares about, when the fiction calls for it. Signal danger clearly before it strikes, then let it strike. The player character dies only as the plain result of the player\'s own choice, after fair warning.'],
     ['nar_tempo_slow', 'Slow tempo', 'Tempo: slow. One scene, one beat. Linger on setting and small reactions; do not skip time unless the player does.'],
@@ -142,14 +140,12 @@ writeFileSync(join(dist, 'Narrator.card.json'), JSON.stringify(card, null, 2));
 // resolved, so the preset says plainly which rating it is (owner, 22 Nov 2026: one preset that switched itself confused).
 const PROSE = read('src/preset.md');
 
-/** The prose with every {{if .nar_pg}} / {{if !.nar_pg}} gate resolved for one rating. */
+/** Resolve the build-time branches. The imported presets have no rating macros. */
 function forRating(text, pg) {
     const out = text
-        .replace(/\{\{if \.nar_pg\}\}([\s\S]*?)\{\{else\}\}([\s\S]*?)\{\{\/if\}\}/g, (_, a, b) => (pg ? a : b))
-        .replace(/\{\{if !\.nar_pg\}\}([\s\S]*?)\{\{\/if\}\}/g, (_, a) => (pg ? '' : a))
-        .replace(/\{\{if \.nar_pg\}\}([\s\S]*?)\{\{\/if\}\}/g, (_, a) => (pg ? a : ''))
-        .replace(/\{\{if \.nar_explicit\}\}[\s\S]*?\{\{\/if\}\}/g, block => (pg ? '' : block));
-    if (/nar_pg/.test(out)) throw new Error('preset.md: an unresolved PG gate is left');
+        .replace(/\{\{if \.preset_pg\}\}([\s\S]*?)\{\{else\}\}([\s\S]*?)\{\{\/if\}\}/g, (_, a, b) => (pg ? a : b))
+        .replace(/\{\{if !\.preset_pg\}\}([\s\S]*?)\{\{\/if\}\}/g, (_, a) => (pg ? '' : a));
+    if (/preset_pg/.test(out)) throw new Error('preset.md: an unresolved PG gate is left');
     // PG has no section 7 (Adult Content): the sections after it move up one, and so do references to them.
     return pg ? out.replace(/^## (\d+)\./gm, (m, n) => (Number(n) > 7 ? `## ${n - 1}.` : m)).replace(/\bsection 8\b/g, 'section 7') : out;
 }
@@ -192,8 +188,6 @@ const qrSet = {
         qr(2, 'Re-plan', '/director replan', 'Force a re-plan'),
         qr(3, 'Story profile', '/director profile', 'Re-run the story profile'),
         qr(4, 'Opening', '/director opening', 'Draft an opening from a premise'),
-        qr(6, 'PG', '/director pg', 'Rate this story PG: adult content off'),
-        qr(7, 'Mature', '/director pg off', 'Back to the mature rating'),
         qr(5, 'Dump state', '/director dump | /popup <pre>{{pipe}}</pre>', 'Show the full state'),
     ],
     idIndex: 7,

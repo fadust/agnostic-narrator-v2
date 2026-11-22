@@ -15,9 +15,6 @@ All commands begin with `/director`. Anything that is not a keyword is a free-te
 | `/director beats: one; two` | Queue beats ahead of the plan, separated by semicolons |
 | `/director rewrite: <instruction>` | Redo the latest reply as a new swipe, with the instruction |
 | `/director retcon: <text>` | Remove facts containing the text, or closely matching it, and tell the narrator it did not happen |
-| `/director pg` | Request a general-audience tone |
-| `/director pg off` | Return this story to mature: explicit on, lethality high |
-| `/director explicit on` / `off` | Within a mature story, write sex scenes or fade to black |
 | `/director profile` | Draft the story profile again |
 | `/director confirm` | Accept the story profile as it stands |
 | `/director revise genre <instruction>` | Have the profile revised by instruction |
@@ -45,7 +42,6 @@ Under **Extensions → Narrator Director**.
 | Tries per reply | 2 | How many times the observer may fail on one reply before it is left for `/director retry` |
 | Longest answer per module | Observer 1500, planner 3000, summariser 500, story profile 700, character profiles 700, opening 900 | Token limit for each module's answer |
 | Where the notes go | Automatic | Where the notes go. Auto uses a `{{director_notes}}` preset entry if one is enabled; otherwise depth 1 as a system message, or the system prompt for Claude and Gemini |
-| Content rating for new stories | Mature | Mature or PG |
 | Other members' greetings | Hide | Hide them from the prompt, or keep them |
 | Largest cast sent in full | 4 | Above this many cast cards the group swaps and the director sends the cast |
 | Re-plan every N turns | 0 | 0 means on events only: the openings run out, you go elsewhere, the scene stalls, the story drifts, or you ask. A timed re-plan can replace an opening you were about to take |
@@ -126,14 +122,12 @@ Public state is written to chat variables after every change.
 | `nar_lethality_<level>` | `none`, `low`, `real` or `high` |
 | `nar_tempo_<level>` | `slow`, `measured`, `brisk` or `relentless` |
 | `nar_tension_<level>` | `low`, `rising`, `high` or `peak` |
-| `nar_explicit` | Explicit content is on |
-| `nar_pg` | The story is rated PG |
 | `nar_trust_<name>_<band>` | For each present character: `hostile`, `wary`, `neutral`, `warm` or `devoted` |
 | `nar_trust_<name>_high`, `_low` | Warm or better; wary or worse |
 
 **Values**, for `{{getvar::name}}`: `nar_genre`, `nar_mood`, `nar_location`.
 
-**Object**, for Tavern Helper: `nar`, with `genre`, `secondary`, `register`, `pov`, `tempo`, `lethality`, `explicit`, `pg`, `mood`, `location`, `time`, `present`, `tension`, `trust`.
+**Object**, for Tavern Helper: `nar`, with `genre`, `secondary`, `register`, `pov`, `tempo`, `lethality`, `mood`, `location`, `time`, `present`, `tension`, `trust`.
 
 Names become lowercase with underscores: `Ji Si` is `ji_si`.
 
@@ -168,7 +162,7 @@ Nothing else is stored. State is rebuilt from the messages each time it is neede
 | `core/director.js` | The pipeline: observe, profile, plan, roll up |
 | `core/brief.js` | Composes the notes and the story block |
 | `core/social.js` | Turns abilities and relationships into words; attempt tiers |
-| `core/planner.js` | Validates profiles, arcs and plans; the rating; re-plan triggers |
+| `core/planner.js` | Validates profiles, arcs and plans and decides when to re-plan |
 | `core/lore.js` | Derives the dynamic lorebook |
 | `core/prompts.js` | Every prompt the director sends |
 | `core/vars.js` | Public variables |

@@ -214,7 +214,6 @@ export function mountUi(api) {
             ${MODULES.map(m => `<label class="nd-row"><span>${h(MODULE_LABELS[m])}</span><input type="number" min="100" step="50" class="text_pole nd-num" data-nd-token="${m}" value="${Number(s.tokens?.[m])}"></label>`).join('')}
 
             <h4>Story</h4>
-            ${sel('nd-rating', 'Content rating for new stories', s.rating, [['mature', 'Mature'], ['pg', 'PG']], 'Mature requests explicit detail and high lethality. PG requests a general-audience tone. Change one story on the inspector\'s Now tab.')}
             ${sel('nd-placement', 'Where the notes go', s.placement, [['auto', 'Automatic'], ['depth', 'Before your last message'], ['system', 'In the system prompt'], ['macro', 'Only where {{director_notes}} is']], 'Automatic: a {{director_notes}} preset entry if one is enabled; otherwise before your last message, or in the system prompt for Claude and Gemini.')}
             ${num('cadence', 'Re-plan every N turns', '0 (the default) means on events only: the planner runs when the openings run out, when you go elsewhere, when the scene stalls, when the story drifts, and on request. A timed re-plan can replace an opening you were about to take.')}
             ${num('nudgeAfter', 'Nudge a waiting opening after N turns', 'An opening offered this many turns without being taken is mentioned to the narrator once more, as still there; never pressed. It is retired two turns later (five later if the plan needs it). Going elsewhere counts as passing it by, not waiting. 0 means never nudge.')}
@@ -269,7 +268,6 @@ export function mountUi(api) {
         .on('change', '#nd-mirror', function () { set('mirrorLore', this.checked); })
         .on('change', '[data-nd-token]', function () { api.getSettings().tokens[this.dataset.ndToken] = Math.max(100, Number(this.value) || 100); api.saveSettings(); })
         .on('change', '#nd-placement', function () { set('placement', this.value); })
-        .on('change', '#nd-rating', function () { set('rating', this.value); })
         .on('change', '#nd-greetings', function () { set('greetings', this.value); })
         .on('change', '#nd-memory', function () { set('memory', this.value); })
         .on('change', '#nd-memory-provider', function () { set('memoryProvider', this.value); })
@@ -303,17 +301,12 @@ export function mountUi(api) {
         now(s) {
             const b = api.getBrief();
             const g = api.groupInfo();
-            const pg = !!s.genre?.pg;
             const total = s.meta.accepted + s.meta.rejected;
             return `
                 <h4>This chat</h4>
                 <div class="nd-field"><span>Director</span><div class="nd-seg">
                     ${button('cmd', 'Off', 'data-cmd="off"')}
                     <small>Off stops the director in this chat only.</small></div></div>
-                <div class="nd-field"><span>Rating</span><div class="nd-seg">
-                    <button type="button" class="menu_button ${pg ? '' : 'nd-on'}" data-act="rating" data-value="mature" aria-pressed="${!pg}">Mature</button>
-                    <button type="button" class="menu_button ${pg ? 'nd-on' : ''}" data-act="rating" data-value="pg" aria-pressed="${pg}">PG</button>
-                    <small>${pg ? 'General-audience tone requested.' : s.genre?.explicit ? 'Explicit content is on.' : 'Explicit content is off.'}</small></div></div>
                 <div class="nd-field"><span>Progress</span><div>Turn ${s.meta.turn} · ${s.canon.length} facts on record${total ? ` · ${Math.round(100 * s.meta.rejected / total)}% of proposed changes refused` : ''}${s.meta.lagging ? ' · <span class="nd-warn">the latest reply is not read yet</span>' : ''}</div></div>
                 ${g ? `<div class="nd-field"><span>Group</span><div>${h(GROUP_MODES[g.mode] ?? g.mode)} · ${g.cast} cast · ${g.muted} muted ${button('setup', 'Mute the cast so only the narrator speaks')}</div></div>` : ''}
                 <div class="nd-field"><span>Notes are placed</span><div>${h({ depth: 'before your last message', system: 'in the system prompt', macro: 'where the preset has {{director_notes}}' }[b.placement] ?? b.placement)}</div></div>
@@ -394,8 +387,8 @@ export function mountUi(api) {
                 <div data-form="profile">
                     <h4>Story profile ${g.confirmed === false && s.meta.turn === 0 ? '<small class="nd-warn">a draft; saving accepts it</small>' : ''}</h4>
                     ${field('Genre', text('dominant', g.dominant, 'fantasy'))}
-                    ${field('Also', text('secondary', (g.secondary ?? []).join(', '), 'adventure, romance'))}
-                    ${field('Voice', area('register', g.register, 2, 'diction, rhythm, humour, how graphic'))}
+                    ${field('Also', text('secondary', (g.secondary ?? []).join(', '), 'adventure, romance'), 'Up to three secondary genres, separated by commas. Smut is recognized as erotica.')}
+                    ${field('Voice', area('register', g.register, 2, 'diction, rhythm and humour'))}
                     ${field('Point of view', text('pov', g.pov, 'second person, present tense'))}
                     ${field('Tempo', select('tempo', g.tempo ?? 'measured', TEMPO))}
                     ${field('Lethality', select('lethality', g.lethality ?? 'low', LETHALITY))}
@@ -405,7 +398,6 @@ export function mountUi(api) {
                     ${field('Avoid', area('avoid', lines(g.avoid), 3, 'one per line'))}
                     <div class="nd-field"><span>Abilities that matter</span><div class="nd-checks">${STATS.map(st => `<label class="nd-check"><input type="checkbox" data-f="stats_focus" data-multi="1" value="${st}" ${(g.stats_focus ?? []).includes(st) ? 'checked' : ''}> ${st}</label>`).join('')}</div></div>
                     ${field('Status', `<div>${g.confirmed ? 'Accepted by you.' : s.meta.turn > 0 ? 'A draft, treated as accepted since play began.' : 'A draft. Saving accepts it.'}</div>`)}
-                    <div class="nd-field"><span></span><div>${g.pg ? '<small>Rated PG: explicit content is off. Change the rating on the Now tab.</small>' : check('explicit', g.explicit, 'Write sex scenes (off: fade to black)')}</div></div>
                     <div class="nd-actions">${button('save-profile', 'Save the profile')}${button('cmd', 'Draft it again', 'data-cmd="profile"')}</div>
                 </div>
                 <div data-form="premise">
@@ -693,7 +685,6 @@ export function mountUi(api) {
 
     const actions = {
         cmd(el, epoch) { return commandAction(el.dataset.cmd, epoch); },
-        rating(el, epoch) { return commandAction(el.dataset.value === 'pg' ? 'pg' : 'pg off', epoch); },
         async setup(_el, epoch) {
             const out = await api.setupGroup();
             if (!director.owns(epoch)) return;
@@ -799,7 +790,6 @@ export function mountUi(api) {
                 ...g, dominant: f.dominant, secondary: fromCommas(f.secondary), register: f.register, pov: f.pov, tempo: f.tempo,
                 lethality: f.lethality, stakes: f.stakes, priority: fromLines(f.priority), promises: fromLines(f.promises), avoid: fromLines(f.avoid),
                 stats_focus: f.stats_focus ?? [],
-                explicit: g.pg ? false : !!f.explicit,
             });
             if (!director.owns(epoch)) return;
             if (saved) done('Story profile saved');

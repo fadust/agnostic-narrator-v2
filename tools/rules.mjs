@@ -45,7 +45,7 @@ ${craft.join('\n')}
 
 ## 3. Companion preset
 
-Source: \`card/src/preset.md\`. The main prompt of the two companion presets, \`Narrator Companion (Mature)\` and \`Narrator Companion (PG)\`, built from this one source. At build time the \`{{if .nar_pg}}\` / \`{{else}}\` / \`{{/if}}\` branches are resolved: the PG preset keeps the first branch, the Mature preset the second; \`{{if !.nar_pg}}\` blocks are in the Mature preset only. In the PG preset the sections after 7 move up one.
+Source: \`card/src/preset.md\`. The main prompt of the companion presets, \`Narrator Companion (PG)\` and \`Narrator Companion (Mature)\`. The build resolves the preset branches into two standalone files. In the PG preset the sections after 7 move up one.
 
 ${quote(read('card/src/preset.md'))}
 
@@ -101,7 +101,6 @@ Source: \`core/\`. No prompt can override these.
 | A late director does not steer | Notes built before the newest reply was read carry no intent, clue or correction (\`brief.js\`) |
 | Private state stays private | Plans, clues, beliefs and canon are never written to chat variables (\`vars.js\`) |
 | Code never kills a character | A serious untreated condition worsens once, to critical; mild ones never worsen on their own (\`state.js\`) |
-| PG tone | PG selects general-audience guidance and clears the Explicit flag (\`planner.js\`) |
 `;
 }
 

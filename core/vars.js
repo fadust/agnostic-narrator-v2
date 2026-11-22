@@ -28,8 +28,6 @@ export function publicVars(state) {
         pov: g.pov ?? '',
         tempo: g.tempo ?? '',
         lethality: g.lethality ?? '',
-        explicit: !!g.explicit,
-        pg: !!g.pg,
         mood: state.scene.mood,
         location: state.scene.location.established ? state.scene.location.value : '',
         time: state.scene.time.established ? state.scene.time.value : '',
@@ -41,8 +39,6 @@ export function publicVars(state) {
     for (const name of [g.dominant, ...(g.secondary ?? [])].filter(Boolean)) flags[`nar_genre_${slug(name)}`] = '1';
     if (g.dominant) flags.nar_genre = g.dominant;
     if (g.lethality) flags[`nar_lethality_${slug(g.lethality)}`] = '1';
-    if (g.explicit) flags.nar_explicit = '1';
-    if (g.pg) flags.nar_pg = '1';
     if (g.tempo) flags[`nar_tempo_${slug(g.tempo)}`] = '1';
     flags[`nar_tension_${slug(tension)}`] = '1';
     for (const [n, band] of Object.entries(trust)) {

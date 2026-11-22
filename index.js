@@ -8,7 +8,7 @@ import { buildBrief, buildStoryBlock } from './core/brief.js';
 import { DEFAULTS, Director } from './core/director.js';
 import { extractJson } from './core/json.js';
 import { DYNAMIC_WORLD, toWorldInfoEntry } from './core/lore.js';
-import { applyRating, validateGenre } from './core/planner.js';
+import { validateGenre } from './core/planner.js';
 import { openingPrompt, premisePrompt, revisePrompt } from './core/prompts.js';
 import { castPeople, classify } from './core/state.js';
 import { FALLBACK_NOTE, hasLeak, parseTags, stripDirector } from './core/text.js';
@@ -53,7 +53,6 @@ const SETTINGS_DEFAULTS = {
     setTemps: true,              // send a temperature with director calls made through a connection profile
     tempRecord: 0.2,             // observer, summariser, story profile, character profiles: quotes must be exact
     tempPlan: 0.7,               // planner and opening: variety is wanted
-    rating: 'mature',            // default content rating for new stories: mature | pg
     mirrorLore: true,            // keep real lorebook files for the director's entries, so other extensions can look them up
     memory: 'director',          // director | extension | off: who keeps the story's memory and feeds it to the narrator
     memoryProvider: 'auto',      // with memory 'extension': auto | baibai | summarize | macro (see st/providers.js)
@@ -234,27 +233,7 @@ function refresh(reason = '') {
         const changed = ref ? writeVars(vars, publicVars(director.readView())) : clearVars(vars);
         if (changed) c.saveMetadataDebounced();
     }
-    if (ref) checkPresetRating();
     ui?.update(reason);
-}
-
-/**
- * The companion preset comes as two files, Mature and PG (owner, 22 Nov 2026). When the selected one does not match the
- * story's rating, say so once per chat and rating; another preset (neither marker) is left alone.
- */
-let presetWarned = '';
-function checkPresetRating() {
-    const c = ctx();
-    if (c.mainApi !== 'openai') return;
-    const main = String((c.chatCompletionSettings?.prompts ?? []).find(p => p.identifier === 'main')?.content ?? '');
-    const kind = main.includes('## 7. Adult Content') ? 'Mature' : main.includes('This story is rated PG.') ? 'PG' : '';
-    if (!kind) return;
-    const pg = !!director.readView().genre?.pg;
-    const want = pg ? 'PG' : 'Mature';
-    const key = `${c.getCurrentChatId?.() ?? ''}|${kind}|${want}`;
-    if (kind === want || presetWarned === key) return;
-    presetWarned = key;
-    toastr.warning(`This story is rated ${pg ? 'PG' : 'mature'}, but the ${kind} companion preset is selected. Select "Narrator Companion (${want})" in AI Response Configuration.`, 'Narrator Director', { timeOut: 15000 });
 }
 
 function presetHasMacro() {
@@ -768,7 +747,7 @@ async function revise(kind, instruction) {
         if (!director.owns(epoch)) return CHAT_CHANGED;
         const parsed = extractJson(raw);
         const saved = parsed.ok && await confirmGenre({
-            ...parsed.value, pg: state.genre.pg, explicit: state.genre.explicit, lethality: state.genre.lethality,
+            ...parsed.value, lethality: state.genre.lethality,
         });
         return saved ? 'Story profile revised.' : 'The revision did not return a valid story profile.';
     }
@@ -850,24 +829,9 @@ async function runDirectorCommand(text, epoch) {
             await c.swipe.right(); // past the last swipe: SillyTavern generates a new one
             return '';
         }
-        case 'pg': {
-            if (rest && !/^(on|off|no|yes|true|false|0|1)$/i.test(rest)) return 'Use /director pg on or /director pg off.';
-            // The rating switch. PG turns all adult content off; "pg off" returns the story to the mature default.
-            const off = /^(off|no|false|0)$/i.test(rest.trim());
-            const genre = director.view().genre;
-            if (!genre) return 'The story profile is not ready yet.';
-            if (!await confirmGenre(applyRating(genre, off ? 'mature' : 'pg'))) return 'The rating could not be saved.';
-            return off ? 'Mature rating: explicit content on, lethality high. Select the "Narrator Companion (Mature)" preset.' : 'PG rating: general-audience tone requested. Select the "Narrator Companion (PG)" preset.';
-        }
-        case 'explicit': {
-            if (rest && !/^(on|off|no|yes|true|false|0|1)$/i.test(rest)) return 'Use /director explicit on or /director explicit off.';
-            const on = !/^(off|no|false|0)$/i.test(rest.trim());
-            const genre = director.view().genre;
-            if (!genre) return 'The story profile is not ready yet.';
-            if (on && genre.pg) return 'This story is rated PG. Use /director pg off first.';
-            if (!await confirmGenre({ ...genre, explicit: on })) return 'The explicit-content setting could not be saved.';
-            return on ? 'Explicit content is on for this story.' : 'Explicit content is off for this story.';
-        }
+        case 'pg':
+        case 'explicit':
+            return 'Content is set by the selected preset. Choose Narrator Companion (PG) or Narrator Companion (Mature) in AI Response Configuration.';
         case 'retcon': return retcon(rest);
         case 'profile': return await rerunGenre() ? 'Story profile saved.' : 'No story profile was saved. Add a premise and check the Log tab.';
         case 'confirm': return await confirmGenre(director.view().genre) ? 'Story profile confirmed.' : 'A valid story profile is needed first.';
@@ -1028,8 +992,6 @@ function registerCommand() {
 <li><code>/director beats: a rival appears; the storm breaks</code></li>
 <li><code>/director rewrite: less dialogue</code> – redo the latest reply as a new swipe</li>
 <li><code>/director retcon: the letter was burned</code></li>
-<li><code>/director pg</code> – request a general-audience tone (<code>/director pg off</code> returns to mature). Pair it with the matching companion preset.</li>
-<li><code>/director explicit off</code> – keep the mature rating but fade to black on sex</li>
 <li><code>/director redraft</code> – a fresh arc, spine and plan from where the story stands, when the story feels stuck</li>
 <li><code>/director settle &lt;text&gt;</code> – close a matter so the story stops pressing it; <code>/director unsettle</code> lists and reopens</li>
 <li><code>/director spine</code> – draft the story spine (endings and milestones) now, or redraft it</li>

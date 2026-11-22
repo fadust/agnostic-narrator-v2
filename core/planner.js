@@ -29,24 +29,9 @@ export function validateGenre(raw) {
             promises: strs(raw.promises, 5),
             avoid: strs(raw.avoid, 5),
             stats_focus: strs(raw.stats_focus, 7, 20).filter(s => STATS.includes(s)),
-            // Infer explicit content from the genre only when the switch was omitted.
-            // PG is the rating switch for the whole story and wins over everything else here.
-            pg: raw.pg === true,
-            explicit: raw.pg !== true && (raw.explicit ?? [raw.dominant, ...arr(raw.secondary)].some(g => genreLabel(g) === 'erotica')) === true,
             confirmed: raw.confirmed === true,
         },
     };
-}
-
-/**
- * The content rating applied to a story profile. Mature is the default: explicit content on and lethality high,
- * whatever the profiler guessed. PG turns adult content off and leaves the story's own lethality alone.
- * @param {object} genre A validated profile.
- * @param {'mature'|'pg'} rating
- */
-export function applyRating(genre, rating) {
-    if (rating === 'pg') return { ...genre, pg: true, explicit: false };
-    return { ...genre, pg: false, explicit: true, lethality: 'high' };
 }
 
 export function validateArc(raw) {

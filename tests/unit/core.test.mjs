@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { buildBrief, buildStoryBlock } from '../../core/brief.js';
 import { extractJson } from '../../core/json.js';
-import { applyRating, rotate, validateArc, validateGenre, validatePlan, validateProfile } from '../../core/planner.js';
+import { rotate, validateArc, validateGenre, validatePlan, validateProfile } from '../../core/planner.js';
 import { splitByCast, summaryView } from '../../core/record.js';
 import { detectAttempt } from '../../core/social.js';
 import { buildLorebook } from '../../core/lore.js';
@@ -296,15 +296,16 @@ test('enabling the director on a long chat reads only the latest replies, but an
     void s2;
 });
 
-test('explicit content is a switch of its own: set by flag or by an erotica label, off otherwise', () => {
-    const flagsOf = (raw) => publicVars({ ...initialState(), genre: validateGenre(raw).value }).flags;
-    assert.equal(flagsOf({ dominant: 'Fantasy' }).nar_explicit, undefined);
-    assert.equal(flagsOf({ dominant: 'fantasy', explicit: true }).nar_explicit, '1');
-    const smut = flagsOf({ dominant: 'romance', secondary: ['Smut'] });
-    assert.equal(smut.nar_explicit, '1');
-    assert.equal(smut.nar_genre_erotica, '1');
-    assert.match(buildStoryBlock({ ...initialState(), genre: validateGenre({ dominant: 'fantasy', explicit: true }).value }).text, /Use direct detail when it fits the scene/);
-    assert.ok(!buildStoryBlock({ ...initialState(), genre: validateGenre({ dominant: 'fantasy' }).value }).text.includes('explicit'));
+test('mixed genres accept smut and erotica without setting a content rating', () => {
+    const genre = validateGenre({ dominant: 'Romance', secondary: ['Mystery', 'Smut', 'Erotica'], pg: true, explicit: true }).value;
+    assert.deepEqual(genre.secondary, ['mystery', 'erotica']);
+    const state = initialState({ genre });
+    const { flags } = publicVars(state);
+    for (const label of ['romance', 'mystery', 'erotica']) assert.equal(flags[`nar_genre_${label}`], '1');
+    assert.equal(flags.nar_explicit, undefined);
+    assert.equal(flags.nar_pg, undefined);
+    assert.match(buildStoryBlock(state).text, /genre: romance \/ mystery \/ erotica/);
+    assert.doesNotMatch(buildStoryBlock(state).text, /rating:|adult content|general-audience/i);
 });
 
 test('presence is additive: omission never removes anyone; leaving needs a quoted departure or a change of place', async () => {
@@ -605,14 +606,18 @@ test('summaries of messages the player hid count as out of the prompt', async ()
     assert.ok(text.includes('Chapter one') && !text.includes('Chapter two'));
 });
 
-test('rating: mature is explicit with high lethality; PG switches adult content off and cannot be overridden by a label', () => {
-    const base = validateGenre({ dominant: 'slice of life', lethality: 'none' }).value;
-    const mature = publicVars({ ...initialState(), genre: applyRating(base, 'mature') }).flags;
-    assert.equal(mature.nar_explicit, '1');
-    assert.equal(mature.nar_lethality_high, '1');
-    assert.equal(mature.nar_pg, undefined);
-    const pg = publicVars({ ...initialState(), genre: applyRating(applyRating(base, 'mature'), 'pg') }).flags;
-    assert.equal(pg.nar_pg, '1');
-    assert.equal(pg.nar_explicit, undefined);
-    assert.equal(validateGenre({ dominant: 'erotica', pg: true, explicit: true }).value.explicit, false);
+test('saved profiles replay without legacy rating fields and keep their genre and stakes', () => {
+    const legacy = { dominant: 'slice of life', lethality: 'none', pg: true, explicit: false };
+    assert.deepEqual(initialState({ genre: legacy }).genre, { dominant: 'slice of life', lethality: 'none' });
+    const chat = [user('I sit near the window.')];
+    reconcile(chat, NARRATOR);
+    logOp(chat[0], { kind: 'genre', by: 'player', value: legacy });
+    const state = replay(chat, { narrator: NARRATOR });
+    assert.deepEqual(state.genre, { dominant: 'slice of life', lethality: 'none' });
+    assert.equal(chat[0].narrator_ops[0].value.pg, true, 'replay preserves the saved record');
+    const vars = { nar_pg: '1', nar_explicit: '1' };
+    writeVars(vars, publicVars(state));
+    assert.equal(vars.nar_pg, undefined);
+    assert.equal(vars.nar_explicit, undefined);
+    assert.equal(vars.nar_lethality_none, '1');
 });

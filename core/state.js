@@ -26,9 +26,16 @@ export const RECORD_VERSION = 1;
 const STATUS_WORSEN_AFTER = 10;
 const STATUS_EASE_AFTER = 4;
 
+/** Legacy profiles may contain rating toggles. Keep their story data for replay. */
+function storyGenre(value) {
+    if (!isObj(value)) return null;
+    const { pg, explicit, ...profile } = value;
+    return clone(profile);
+}
+
 export function initialState(setup = {}) {
     return {
-        genre: clone(setup.genre) ?? null,
+        genre: storyGenre(setup.genre),
         premise: setup.premise ?? '',
         arc: null,
         spine: null,
@@ -676,7 +683,7 @@ export function applyOp(state, op, entry, chatMids) {
     if (applySpineOp(state, op, entry)) return;
     if (applyAgendaOp(state, op)) return;
     switch (op.kind) {
-        case 'genre': state.genre = clone(op.value); break;
+        case 'genre': state.genre = storyGenre(op.value); break;
         case 'premise': state.premise = String(op.value ?? ''); break;
         case 'arc': state.arc = clone(op.value); break;
         case 'plan': {

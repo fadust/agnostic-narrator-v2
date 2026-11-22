@@ -222,7 +222,7 @@ export function genrePrompt({ material }) {
 ${JSON_ONLY}
 {
   "dominant": "", "secondary": [],
-  "register": "the prose voice in one sentence: diction, humour, how graphic. Never length or sentence length: the narrator's length rule decides that",
+  "register": "the prose voice in one sentence: diction, imagery and humour. Never length or sentence length: the narrator's length rule decides that",
   "pov": "for example: second person, present tense",
   "priority": ["what to protect when goals conflict, most important first, e.g. character consistency, player agency, tension, comfort"],
   "stakes": "what can be lost in this story",
@@ -230,8 +230,7 @@ ${JSON_ONLY}
   "tempo": "${list(TEMPO)}",
   "promises": ["what this story implicitly promises its player, up to five"],
   "avoid": ["what would break it, up to five"],
-  "stats_focus": ["which of ${STATS.join(', ')} matter in this story; a slice-of-life story may list only presence, perception, will"],
-  "explicit": "true if the material is plainly adult and written for explicit sexual content; otherwise false"
+  "stats_focus": ["which of ${STATS.join(', ')} matter in this story; a slice-of-life story may list only presence, perception, will"]
 }`,
         },
         { role: 'user', content: section('Story material', material) },
@@ -300,7 +299,7 @@ export const PLAN_RULES = `Planning rules:
 - Characters marked "main cast" are the story's core, chosen by the player. Keep them at the centre of the plan and give each a part in where the story goes; other characters take smaller roles.
 - Keep a short horizon: at most ${CAPS.scenes} scenes and ${CAPS.beats} beats. Mark a beat "required" only if the arc cannot work without it.
 - Vary beat types (${BEAT_TYPES.join(', ')}). After two pressure beats the next is anything but pressure.
-- Match the story profile's tempo, stakes, lethality and "avoid" list. Use the selected rating as guidance for tone and detail. A low-stakes story gets small beats that still go somewhere; do not invent danger it has not promised.
+- Match the story profile's tempo, stakes, lethality and "avoid" list. A low-stakes story gets small beats that still go somewhere; do not invent danger it has not promised.
 - Each scene lists what happens if nobody intervenes, its choice points, and an emotional target for each focus character.
 - A beat may carry up to ${CAPS.clues} clues, each reachable by one route: ${CLUE_ROUTES.join(', ')}.
 - "lore" on a beat: up to three keys from Known lore keys that the narrator should have in mind.
@@ -429,7 +428,7 @@ function planContextParts(state, g, cast, done, queued, threads, story, loreKeys
     return [
         section('Story profile', bullets([
             `genre: ${[g.dominant, ...arr(g.secondary)].filter(Boolean).join(' / ')}`, `register: ${g.register}`, `tempo: ${g.tempo}`,
-            `stakes: ${g.stakes}`, `lethality: ${g.lethality}`, `rating: ${g.pg ? 'PG. Aim for a general-audience tone' : 'mature'}`, `intimacy style: ${g.explicit ? 'direct when it fits the scene' : 'implied'}`, `promises: ${arr(g.promises).join('; ')}`, `avoid: ${arr(g.avoid).join('; ')}`,
+            `stakes: ${g.stakes}`, `lethality: ${g.lethality}`, `promises: ${arr(g.promises).join('; ')}`, `avoid: ${arr(g.avoid).join('; ')}`,
         ])),
         section('Premise', state.premise),
         section('Arc', arcForPlanner(state.arc)),
@@ -606,7 +605,7 @@ export function planCheckPrompt({ beats, flags, player, genre, names }) {
                 section('Player character', player),
                 section('Story profile', bullets([
                     `genre: ${[g.dominant, ...arr(g.secondary)].filter(Boolean).join(' / ')}`, `stakes: ${g.stakes ?? ''}`, `lethality: ${g.lethality ?? ''}`,
-                    `rating: ${g.pg ? 'PG' : 'mature'}`, `intimacy style: ${g.explicit ? 'direct when it fits the scene' : 'implied'}`, `avoid: ${arr(g.avoid).join('; ')}`,
+                    `avoid: ${arr(g.avoid).join('; ')}`,
                 ])),
                 section('Names already in the story', arr(names).slice(0, 60).join(', ')),
                 section('Flagged beats', flagged.join('\n')),

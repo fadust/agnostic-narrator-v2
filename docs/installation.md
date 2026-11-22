@@ -24,16 +24,16 @@ The card, preset and quick replies are not installed by the extension: download 
 
 ## 3. Import the companion preset
 
-1. In the chat-completion preset panel, import `dist/Narrator Companion (Mature).preset.json` and `dist/Narrator Companion (PG).preset.json`, and select the one for your story's rating. Mature is the default; a story you make PG with `/director pg` wants the PG preset, and the director says so if the wrong one is selected.
+1. In the chat-completion preset panel, import `dist/Narrator Companion (PG).preset.json` and `dist/Narrator Companion (Mature).preset.json`. Choose PG for a general audience or Mature to allow NSFW and NSFL material where it fits the story.
 2. Check the three values it sets:
 
    | Setting | Value | Change it when |
    | --- | --- | --- |
    | Context size | 200,000 | Your model's window is smaller, or you want the full window of a 1M model |
    | Unlocked context size | On | Never; it lets the slider reach the value above |
-   | Response length | 1,200 | You change the length rules in the preset |
+   | Response length | 1,500 | You change the length rules in the preset |
 
-The preset is optional. The director works with any preset, but only this one switches its content sections with the story's rating.
+The presets are optional. The Director and Narrator card supply story context with either companion preset or a preset of your own.
 
 ## 4. Give the director its own model
 
@@ -85,7 +85,7 @@ Most updates change the extension, and some change the card or preset. The chang
 | --- | --- |
 | Extension | Replace the `narrator-director` folder and reload |
 | Card | Re-import `dist/Narrator.card.json`, replacing the old card |
-| Preset | Import `Narrator Companion (Mature)` and `Narrator Companion (PG)` (they replace the single `Narrator Companion` preset of 0.2.1 and earlier) and select the one for the story's rating |
+| Preset | Re-import `Narrator Companion (PG)` and `Narrator Companion (Mature)`. Select your preferred preset in **AI Response Configuration** |
 
 Director migrates older record layouts when a chat opens. V2 migration was checked with saved fixture chats.
 

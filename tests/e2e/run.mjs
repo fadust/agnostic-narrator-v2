@@ -136,7 +136,7 @@ const useMain = (content) => ev((main) => { SillyTavern.getContext().chatComplet
 
 // ---------------------------------------------------------------- solo chat
 console.log('Solo chat');
-// Use the companion preset's main prompt, so its rating gates are tested in a real prompt.
+// Use the companion preset's main prompt in actual requests.
 await ev(({ main, maxTokens }) => {
     const settings = SillyTavern.getContext().chatCompletionSettings;
     settings.prompts.find(x => x.identifier === 'main').content = main;
@@ -348,7 +348,7 @@ await check('inspector: every tab renders with nothing folded away, and forms on
         const set = document.querySelector('#nd-settings-body');
         const keys = Object.keys(SillyTavern.getContext().extensionSettings.narrator_director);
         const html = set.innerHTML;
-        const has = { enabled: '#nd-enabled', profile: '#nd-profile', profiles: '[data-nd-module]', setTemps: '#nd-temps', placement: '#nd-placement', rating: '#nd-rating', greetings: '#nd-greetings', mirrorLore: '#nd-mirror', tokens: '[data-nd-token]', memory: '#nd-memory', memoryProvider: '#nd-memory-provider', memoryMacro: '#nd-memory-macro', stripTags: '#nd-strip' };
+        const has = { enabled: '#nd-enabled', profile: '#nd-profile', profiles: '[data-nd-module]', setTemps: '#nd-temps', placement: '#nd-placement', greetings: '#nd-greetings', mirrorLore: '#nd-mirror', tokens: '[data-nd-token]', memory: '#nd-memory', memoryProvider: '#nd-memory-provider', memoryMacro: '#nd-memory-macro', stripTags: '#nd-strip' };
         // One-time migration markers are not settings (cadenceEvents: timed re-plans moved to off once, 18 Nov 2026).
         const internal = new Set(['cadenceEvents']);
         const missing = keys.filter(k => !internal.has(k)).filter(k => !(has[k] ? set.querySelector(has[k]) : set.querySelector(`[data-nd-num="${k}"]`)));
@@ -410,31 +410,31 @@ await check('a branch rebuilds its own state from its own messages', async () =>
     assert(state.meta.turn === 2 && state.summaries.recent.length < full.summaries.recent.length && state.tombstones.length === 0 && state.scene.mood !== 'tense', `turn ${state.meta.turn}, ${state.tombstones.length} undone`);
 });
 
-await check('rating: mature by default; /director pg turns adult lore off and asks for the PG preset, which leaves adult content out', async () => {
-    let vars = await ev(() => SillyTavern.getContext().chatMetadata.variables);
-    assert(vars.nar_explicit === '1' && vars.nar_lethality_high === '1' && !vars.nar_pg, `defaults: ${JSON.stringify(vars)}`);
+await check('switching presets controls the actual narrator prompt without changing story stakes', async () => {
+    assert((await view()).genre.lethality === 'real', 'The active Mature preset forced high lethality');
     let text = flat(lastPrompt());
-    assert(text.includes('Explicit content is part of this story'), 'explicit tone guidance missing by default');
+    assert(text.includes('NSFW and NSFL material can appear') && text.includes('## 7. Adult Content'), 'Mature guidance is absent');
     assert(!/## Boundaries|without exception|Nothing in this block reaches past that line/i.test(text),
         'Built-in content restrictions reached the actual narrator prompt');
-    assert(text.includes('## 7. Adult Content') && text.includes('for an adult audience') && !text.includes('{{'), 'mature preset sections missing or unresolved');
-    await slash('/director pg');
-    await sleep(300);
-    const warned = await ev(() => [...document.querySelectorAll('#toast-container .toast-warning')].map(t => t.textContent).join(' | '));
-    assert(/rated PG, but the Mature companion preset is selected/.test(warned), 'no preset warning: ' + warned);
+    assert(!/rating:|intimacy style:/i.test(storyOf(lastPrompt())), 'The Director injected a content rating');
+    assert(/set by the selected preset/i.test(await slash('/director pg')), 'The old PG command did not direct the user to presets');
+    await ev(() => {
+        const { chatMetadata } = SillyTavern.getContext();
+        Object.assign(chatMetadata.variables, { nar_pg: '1', nar_explicit: '1' });
+        Object.assign(chatMetadata.narrator_director.setup.genre, { pg: true, explicit: false });
+    });
     await useMain(presetMain('PG'));
     await send('I sit by the fire.');
     text = flat(lastPrompt());
-    vars = await ev(() => SillyTavern.getContext().chatMetadata.variables);
-    assert(vars.nar_pg === '1' && !vars.nar_explicit, `pg flags: ${JSON.stringify(vars)}`);
-    assert(text.includes('This story is rated PG') && !text.includes('Explicit content is part of this story'), 'PG lore entry not in effect');
-    assert(!text.includes('## 7. Adult Content') && !text.includes('for an adult audience') && text.includes('up to the closed door'), 'preset did not switch to PG');
-    assert(/\brating:\s*PG\b/i.test(storyOf(lastPrompt())), 'story profile rating missing');
-    await slash('/director pg off');
+    const vars = await ev(() => SillyTavern.getContext().chatMetadata.variables);
+    assert(!('nar_pg' in vars) && !('nar_explicit' in vars), 'Legacy rating flags remain active');
+    assert(text.includes('general-audience tone') && text.includes('Keep violence non-graphic'), 'PG guidance is absent');
+    assert(!/NSFW and NSFL|## 7\. Adult Content|for an adult audience/.test(text), 'Mature guidance leaked into PG');
+    assert((await view()).genre.lethality === 'real', 'Switching presets changed story stakes');
     await useMain(presetMain('Mature'));
     await send('I stand up.');
     text = flat(lastPrompt());
-    assert(text.includes('## 7. Adult Content') && text.includes('Explicit content is part of this story'), 'mature rating did not come back');
+    assert(text.includes('## 7. Adult Content') && text.includes('NSFW and NSFL material can appear') && !text.includes('{{if'), 'Mature still depends on a rating flag');
 });
 
 await check('disabled: no notes, no flags, card still narrates', async () => {
@@ -577,7 +577,7 @@ await check('keyboard saves a retained Scene draft, while later edits and swipes
     assert((await view()).scene.location.value === 'the Lantern Annex', 'Saving Mood froze the old Location after a swipe');
 });
 
-await check('390px touch can navigate, choose PG, save a scene and close the Inspector', async () => {
+await check('390px touch can navigate, save a scene and close the Inspector', async () => {
     const viewport = page.viewportSize();
     const cdp = await page.context().newCDPSession(page);
     async function tap(locator) {
@@ -606,10 +606,6 @@ await check('390px touch can navigate, choose PG, save a scene and close the Ins
         await page.locator('#toast-container').waitFor({ state: 'hidden' });
         await tap(directorTab('now'));
         await page.waitForFunction(() => document.querySelector('.nd-tabs [data-nd-tab="now"]').getAttribute('aria-current') === 'true');
-        const pg = page.getByRole('button', { name: 'PG', exact: true });
-        await tap(pg);
-        await feedbackIs('PG rating');
-        assert(await pg.getAttribute('aria-pressed') === 'true', 'Touch did not select PG');
         await tap(directorTab('scene'));
         const inspector = page.locator('#nd-inspector');
         const layout = await inspector.evaluate(n => {
@@ -641,33 +637,35 @@ await check('390px touch can navigate, choose PG, save a scene and close the Ins
     }
 });
 
-await check('Mature Explicit off remains in force after a model-proposed erotica genre and reaches the narrator prompt', async () => {
+await check('a mixed genre including smut is preserved under either preset', async () => {
     await newSolo();
-    await useMain(presetMain('Mature'));
+    await useMain(presetMain('PG'));
     await setScenario('Rowan waits for the rain to stop while visiting an isolated village.');
     await slash('/director profile');
     await idle();
-    await send('I wait for the rain to stop.');
-    assert(flat(lastPrompt()).includes('## 7. Adult Content'), 'The matching Mature preset did not start with its default on');
-    assert(/Explicit content is off/.test(await slash('/director explicit off')), 'Explicit off did not report a saved change');
-    mock.control.revisedGenre = { ...((await view()).genre), dominant: 'erotica', explicit: true };
+    assert(/set by the selected preset/i.test(await slash('/director explicit off')), 'The old Explicit command still changes the story');
+    mock.control.revisedGenre = { ...((await view()).genre), dominant: 'romance', secondary: ['Mystery', 'Smut'], pg: true, explicit: true };
     try {
         assert(/profile revised/i.test(await slash('/director revise genre use the proposed genre')), 'The model-proposed genre did not save');
     } finally {
         mock.control.revisedGenre = null;
     }
     const genre = (await view()).genre;
-    assert(genre.dominant === 'erotica' && !genre.pg && genre.explicit === false, 'A model-proposed genre changed the saved Explicit choice');
-    await send('I check whether the rain has eased.');
-    const prompt = flat(lastPrompt());
-    assert(prompt.includes('for an adult audience') && prompt.includes('Keep intimacy at the closed door')
-        && !prompt.includes('## 7. Adult Content') && !prompt.includes('Explicit content is part of this story')
-        && !prompt.includes('{{if'), 'The actual Mature model request contradicted Explicit off');
+    assert(genre.dominant === 'romance' && genre.secondary.join(',') === 'mystery,erotica' && !('pg' in genre) && !('explicit' in genre),
+        'The revised profile lost its genres or added a content rating');
     await slash('/director inspect');
-    await directorTab('now').click();
-    assert(/Explicit content is off/.test(await page.textContent('#nd-body')), 'Now does not match the saved Explicit state');
-    assert(await page.getByRole('button', { name: 'Mature', exact: true }).getAttribute('aria-pressed') === 'true', 'Now does not show Mature as selected');
-    await page.click('#nd-close');
+    await directorTab('story').click();
+    await page.locator('#nd-body [data-f="secondary"]').fill('Mystery, Smut, Drama');
+    await page.getByRole('button', { name: 'Save the profile' }).click();
+    await feedbackIs('Story profile saved');
+    await send('I check whether the rain has eased.');
+    assert(storyOf(lastPrompt()).includes('genre: romance / mystery / erotica / drama'), 'PG lost a selected genre');
+    assert(!/NSFW and NSFL|Adult Content|Explicit content is part of this story/i.test(flat(lastPrompt())),
+        'A genre activated Mature content in the PG prompt');
+    await useMain(presetMain('Mature'));
+    await send('I wait at the window.');
+    assert(storyOf(lastPrompt()).includes('genre: romance / mystery / erotica / drama'), 'Mature lost a selected genre');
+    assert(flat(lastPrompt()).includes('NSFW and NSFL material can appear'), 'Mature guidance is absent after the switch');
 });
 
 await check('commands report refusal or partial success, and prose containing rewrite creates no new swipe', async () => {
@@ -675,8 +673,6 @@ await check('commands report refusal or partial success, and prose containing re
     await slash('/director inspect');
     await directorTab('now').click();
     assert(/valid story profile is needed/i.test(await slash('/director confirm')), 'Confirm claimed success without a profile');
-    await page.getByRole('button', { name: 'PG', exact: true }).click();
-    await feedbackIs('The story profile is not ready yet.');
     await send('I listen to the rain.');
     assert(/did not return a valid story profile/i.test(await slash('/director revise genre try an invalid change')), 'Revise claimed success on malformed output');
     const newArc = 'Find what changed at the north gate';

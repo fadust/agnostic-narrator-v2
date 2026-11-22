@@ -26,7 +26,8 @@ test('the emitted story block obeys its estimate and preserves higher-priority c
     assert.equal(result.tokens, roughTokens(result.text));
     assert.equal(result.overflow, true, 'the inspector can report that optional context was shortened');
     assert.match(result.text, /^<story_context>\n[\s\S]+\n<\/story_context>$/);
-    assert.match(result.text, /rating:\s*PG/i);
+    assert.match(result.text, /genre: fantasy/);
+    assert.doesNotMatch(result.text, /rating:\s*PG/i);
     assert.match(result.text, /red compass/);
     assert.match(result.text, /scar on her left hand/);
     assert.match(result.text, /The keel struck the reef/);
