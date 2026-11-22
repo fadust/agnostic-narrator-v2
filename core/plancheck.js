@@ -232,8 +232,12 @@ export function fightsGenre(text, genre, names = []) {
 export function flagBeat(b, ctx) {
     const out = [];
     const goal = str(b.goal, 400), pressure = str(b.pressure, 400);
-    if (scriptsPlayer(goal, ctx.player) || scriptsPlayer(pressure, ctx.player)) {
-        out.push({ code: 'script', reason: 'scripts the player character (his action, decision or agreement); state what the world offers instead' });
+    const scripted = [
+        scriptsPlayer(goal, ctx.player) && 'goal',
+        scriptsPlayer(pressure, ctx.player) && 'pressure',
+    ].filter(Boolean);
+    if (scripted.length) {
+        out.push({ code: 'script', reason: `rewrite ${scripted.join(' and ')}: scripted player participation. Describe what happens or is available for the player to notice or act on.` });
     }
     const copy = copiedCriterion(pressure, ctx.criteria);
     if (copy) out.push({ code: 'criterion', reason: `the pressure copies spine criterion ${copy.id} ("${copy.text}"); the goal may name it, the pressure must be an opening in the world in its own words` });

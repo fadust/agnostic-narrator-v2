@@ -592,6 +592,8 @@ ${JSON_ONLY}
 
 export const PLAN_CHECK_SYSTEM = `You check beats a planner drafted for an interactive story. Code flagged the beats below, each with its reasons. Rewrite only those beats so they clear every reason and keep the rules below; keep each beat's purpose, scene and kind. Return one rewrite per flagged id, and no other ids. Give both "goal" and "pressure".
 
+Change each field named in a flag. A flagged goal needs a revised goal, even if the pressure already offers a valid opening. For a player-agency flag, describe an observable event or opportunity and leave the player's perception, actions and decisions open. For example, the changed entry is in plain view at the table.
+
 ${PLAN_RULES}
 
 ${JSON_ONLY}

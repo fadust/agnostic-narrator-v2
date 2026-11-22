@@ -148,6 +148,27 @@ test('W3: a rewrite that still trips a flag is refused; a clean one is kept', ()
     assert.ok(!validatePlanRewrites({ rewrites: [{ id: 'b1', goal: 'You sell it', pressure: 'p' }] }, flags, plan, ctx).ok);
 });
 
+test('the checker names the flagged goal on the saved household tally beat', () => {
+    const goal = "Elizabeth corrects a figure in Bianca's household tally in front of the table, unasked, and Bianca and Max both see it.";
+    const pressure = "Bianca's tradesman's tally and household account lie open on the kitchen plank beside the bread, its columns wrong in two places that any merchant's wife would catch at a glance.";
+    const context = ctxOf({ player: 'Max', names: ['Max', 'Elizabeth', 'Bianca'] });
+    const { plan, flags } = checkPlan({ beats: [beat(goal, pressure, { type: 'reveal', precondition: 'Elizabeth is seated at the kitchen table with the tally in view' })] }, context);
+    assert.deepEqual(flags.map(f => f.codes), [['script']]);
+    const prompt = planCheckPrompt({ beats: plan.beats, flags, player: context.player, genre: context.genre, names: context.names });
+    assert.match(prompt[0].content, /A flagged goal needs a revised goal/);
+    assert.match(prompt[1].content, /flagged: rewrite goal: scripted player participation/);
+
+    const attempted = { id: 'b1', goal, pressure: `${pressure.slice(0, -1)}; Elizabeth sits at the kitchen table with the tally in view.` };
+    assert.deepEqual(validatePlanRewrites({ rewrites: [attempted] }, flags, plan, context), { ok: false, error: 'no usable rewrites' });
+    const corrected = { ...attempted, goal: 'Elizabeth corrects a figure in the open household tally where everyone at the table can see the page.' };
+    const accepted = validatePlanRewrites({ rewrites: [corrected] }, flags, plan, context);
+    assert.ok(accepted.ok);
+    const settled = settlePlan(plan, flags, accepted.value);
+    assert.deepEqual(settled.dropped, []);
+    assert.equal(settled.plan.beats[0].goal, corrected.goal);
+    assert.equal(settled.plan.beats[0].precondition, plan.beats[0].precondition);
+});
+
 test('W3: a failed check drops beats that script the player or fight the genre; the others stay as drafted', async () => {
     const plan = { beats: [beat('Max sells the map'), beat('Elza waits'), beat('a rival is killed', undefined, {}), beat('a quiet supper')] };
     const ctx = ctxOf({ genre: { lethality: 'none', avoid: [] } });
@@ -181,14 +202,19 @@ test('W3 in the director: one check call when flagged; a plan with every beat dr
     assert.equal(director.view().beats.length, 0, 'nothing logged: the only beat scripted the player and its rewrite was refused');
     assert.ok((director.cool.planner ?? 0) > Date.now(), 'the planner rests before trying again');
     assert.ok(director.errors.some(e => e.module === 'planner-check'));
+    assert.ok(director.failing['planner-check'], 'a plan with no usable beats leaves the active warning');
 });
 
-test('W3 in the director: a clean plan makes no check call', async () => {
+test('W3 in the director: saving a clean plan clears the previous warning without making a check call', async () => {
     const chat = [narr('The story opens at the gate of Houshan.'), user('I walk in.'), narr('Ji Si waits beneath the arch.')];
     const { director, state } = makeHost(chat);
+    director.fail('planner-check', new Error('no usable rewrites'));
+    assert.ok(director.failing['planner-check']);
     await director.kick();
     assert.equal(state.calls.filter(c => c.module === 'planner-check').length, 0);
     assert.equal(director.view().beats.length, 2);
+    assert.ok(state.saves > 0);
+    assert.equal(director.failing['planner-check'], undefined);
 });
 
 test('scripts the player anywhere in the text, and when his body or clothes are changed (live, 18 Nov 2026)', async () => {

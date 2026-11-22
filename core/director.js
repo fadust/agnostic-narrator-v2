@@ -414,8 +414,8 @@ export class Director {
         if (!parsed.ok) throw Object.assign(new Error(`${module}: ${parsed.error}`), { invalidAnswer: true });
         const v = validate(parsed.value);
         if (!v.ok) throw Object.assign(new Error(`${module}: ${v.error}`), { invalidAnswer: true });
-        // Recovered only once an answer is usable, not merely received: a model answering in the wrong shape still fails.
-        if (module !== 'profile') this.recovered(module);
+        // A usable answer normally clears the warning. Profiles and plan checks clear it after their results are applied.
+        if (module !== 'profile' && module !== 'planner-check') this.recovered(module);
         return v.value;
     }
 
@@ -1001,8 +1001,9 @@ export class Director {
             return wrote;
         }
         const check = checked.flagged || checked.fixed.length ? { fixed: checked.fixed, rewritten: checked.rewritten, dropped: checked.dropped } : undefined;
-        wrote = this.logOnAnchor(epoch, anchor, anchorHash, { kind: 'plan', by: 'director', value: checked.plan, reason, seq: planSeqOn(anchor), basis, ...(check ? { check } : {}) }) || wrote;
-        return wrote;
+        const saved = this.logOnAnchor(epoch, anchor, anchorHash, { kind: 'plan', by: 'director', value: checked.plan, reason, seq: planSeqOn(anchor), basis, ...(check ? { check } : {}) });
+        if (saved) this.recovered('planner-check');
+        return saved || wrote;
     }
 
     /**
