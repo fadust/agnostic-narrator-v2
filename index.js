@@ -11,7 +11,7 @@ import { DYNAMIC_WORLD, toWorldInfoEntry } from './core/lore.js';
 import { validateGenre } from './core/planner.js';
 import { openingPrompt, premisePrompt, revisePrompt } from './core/prompts.js';
 import { castPeople, classify } from './core/state.js';
-import { FALLBACK_NOTE, hasLeak, parseTags, stripDirector } from './core/text.js';
+import { cleanDialogue, FALLBACK_NOTE, hasLeak, parseTags, stripDirector } from './core/text.js';
 import { clone, similarity, str } from './core/util.js';
 import { clearVars, publicVars, writeVars } from './core/vars.js';
 import { makeCall } from './st/call.js';
@@ -402,18 +402,19 @@ function onGenerationDone() {
     if (narratorRef()) { director.sync(); scheduleKick(); }
 }
 
-/** Leaked director text is removed from the saved reply itself, so it cannot teach the model to leak. */
+/** Clean generated replies before the recorder or the next narrator prompt sees them. */
 function onMessageReceived(id) {
     if (!director.owns()) return;
     const c = ctx();
     const m = c.chat[id];
     const ref = narratorRef();
     if (!ref || !m || m.is_user) return;
-    let dirty = false;
-    if (hasLeak(m.mes)) {
-        m.mes = stripDirector(m.mes);
+    let text = hasLeak(m.mes) ? stripDirector(m.mes) : m.mes;
+    if (classify(m, ref) === 'narration') text = cleanDialogue(text);
+    let dirty = text !== m.mes;
+    if (dirty) {
+        m.mes = text;
         if (Array.isArray(m.swipes) && typeof m.swipe_id === 'number') m.swipes[m.swipe_id] = m.mes;
-        dirty = true;
     }
     if (hasLeak(m.extra?.reasoning)) { m.extra.reasoning = stripDirector(m.extra.reasoning); dirty = true; }
     if (dirty) { c.updateMessageBlock(id, m); c.saveChat(); }

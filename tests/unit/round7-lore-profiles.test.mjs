@@ -3,12 +3,100 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { loreCards } from '../../core/director.js';
-import { initialState } from '../../core/state.js';
+import { ensureCast, initialState } from '../../core/state.js';
+import { castLine } from '../../core/social.js';
+import { validateProfile } from '../../core/planner.js';
 import { fakeObserver, makeHost, narr, replyOf, user } from './helpers.mjs';
 
 const JANUS = 'Janus is an 18-year-old member of Max\'s household, quick, light-footed and shameless.';
 const BIANCA = 'Bianca is a 42-year-old housekeeper, nearly two meters tall, the household\'s guardian.';
 const VILLA = 'The villa on the upper terrace. Its household: Janus, Bianca and the stable boy.';
+
+test('an existing lore profile learns prior history once, preserving recorded feelings and abilities', async () => {
+    const intro = 'Mira waves from the doorway.';
+    const history = 'Mira grew up with Rowan and still trusts them with her life.';
+    const chat = [narr(intro), user('I wave back.')];
+    chat[1].narrator_ops = [
+        { kind: 'profile', by: 'setup', name: 'Mira', value: { name: 'Mira', summary: 'An old friend.', stats: { agility: 55 } }, cardHash: 'legacy', lore: true },
+        { kind: 'cast', by: 'player', action: 'edit', name: 'Mira', fields: [['rel.affection', 0]] },
+    ];
+    const { director, host } = makeHost(chat, {
+        script: () => ({ cast_changes: [{ who: 'Mira', change: 'introduced', quote: intro }] }),
+    });
+    host.cards = async () => [];
+    host.loreEntries = () => [{ keys: ['Mira'], content: history }];
+    const baseCall = host.call;
+    let profiles = 0;
+    host.call = async (module, msgs, ...rest) => {
+        if (module !== 'profile') return baseCall(module, msgs, ...rest);
+        profiles++;
+        assert.match(msgs[1].content, /## Player character\nRowan/);
+        assert.ok(msgs[1].content.includes(history));
+        return JSON.stringify({ summary: 'An old friend.', prior_relationship: { stage: 'close', rel: { trust: 6, affection: 5 }, quote: history } });
+    };
+    await director.kick();
+    await director.kick();
+    const s = director.view();
+    assert.equal(profiles, 1);
+    assert.equal(s.cast.Mira.stage, 'close');
+    assert.deepEqual(s.cast.Mira.rel, { trust: 6, affection: 0, desire: 0, tension: 0 });
+    assert.equal(s.cast.Mira.stats.agility, 55);
+    assert.match(castLine(s, 'Mira'), /warm \(close;/);
+});
+
+test('a group cast card can pick up a matching lore entry once it becomes available', async () => {
+    const history = 'Mira and Rowan have been rivals for years. Mira does not trust Rowan.';
+    const { director, host } = makeHost([narr('The village square is empty.'), user('I wait.')]);
+    host.cards = async () => [{ name: 'Mira', text: 'Mira is a quick-eyed village guide.' }];
+    let entries = [];
+    host.loreEntries = () => entries;
+    const baseCall = host.call;
+    let profiles = 0;
+    host.call = async (module, msgs, ...rest) => {
+        if (module !== 'profile') return baseCall(module, msgs, ...rest);
+        profiles++;
+        return JSON.stringify({ name: 'Mira', summary: 'Village guide.', prior_relationship: msgs[1].content.includes(history)
+            ? { stage: 'familiar', rel: { trust: -6, tension: 5 }, quote: history } : null });
+    };
+    await director.kick();
+    assert.equal(director.view().cast.Mira.stage, 'stranger');
+    entries = [{ keys: ['Mira'], content: history }];
+    await director.kick();
+    await director.kick();
+    assert.equal(profiles, 2);
+    assert.equal(director.view().cast.Mira.stage, 'familiar');
+    assert.equal(director.view().cast.Mira.rel.trust, -6);
+});
+
+test('profile relationship scores require a real source quote and bounded integer values', () => {
+    const source = 'Mira and Rowan worked together for three winters.';
+    const make = quote => validateProfile({
+        summary: 'A guide.', prior_relationship: { stage: 'familiar', rel: { trust: 999, affection: '5', desire: 0, invented: 8 }, quote },
+    }, true, source).value.priorRelationship;
+    assert.equal(make('They have loved each other for years.'), undefined);
+    assert.deepEqual(make(source), { stage: 'familiar', rel: {}, quote: source });
+});
+
+test('narrated history sets familiarity before new changes and disappears with the active reply', async () => {
+    const history = 'Mira has known Rowan for years and relies on their help.';
+    const deed = 'Mira thanks Rowan for taking her shift.';
+    const reply = narr(`${history} ${deed}`);
+    const { director } = makeHost([reply], {
+        script: (module, messages) => replyOf(messages).includes(history) ? {
+            cast_changes: [{ who: 'Mira', change: 'introduced', quote: history }],
+            prior_relationships: [{ who: 'Mira', toward: 'Rowan', stage: 'familiar', rel: { trust: 4 }, quote: history }],
+            relationships: [{ who: 'Mira', toward: 'Rowan', axis: 'trust', dir: 'up', weight: 'minor', category: 'words', quote: deed }],
+        } : {},
+    });
+    await director.kick();
+    assert.equal(director.view().cast.Mira.stage, 'familiar');
+    assert.equal(director.view().cast.Mira.rel.trust, 5);
+    reply.mes = 'An empty room waits beyond the threshold.';
+    await director.kick();
+    assert.equal(director.view().cast.Mira, undefined);
+    const blank = initialState({ player: 'Rowan' });
+    assert.equal(ensureCast(blank, 'Mira').stage, 'stranger');
+});
 
 test('a story character described by a lorebook entry is profiled from it, once', async () => {
     const chat = [narr('Janus drops from the eaves and Bianca fills the doorway.'), user('a')];

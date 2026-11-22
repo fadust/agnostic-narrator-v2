@@ -3,7 +3,7 @@
 
 import {
     AXES, BEAT_PROGRESS, CAPS, CAST_CHANGES, CERTAINTY, EVIDENCE, INITIATIVE, LORE_KINDS, SEVERITY, STATS, STATUS_OPS,
-    THREAD_OPS, WEIGHTS,
+    SCORE_MAX, SCORE_MIN, STAGES, THREAD_OPS, WEIGHTS,
 } from './enums.js';
 import { FACT_KIND_WEIGHT } from './enums.js';
 import { READINGS } from './spine.js';
@@ -12,8 +12,22 @@ import { arr, isBlank, isObj, nameKey, similarity, str } from './util.js';
 
 const PLAYER_ALIASES = /^(the )?(player|player character|user|pc|protagonist|you|\{\{user\}\})$/;
 
+/** An existing relationship needs a source quote. Omitted fields leave the record alone. */
+export function validatePriorRelationship(raw, text) {
+    if (!isObj(raw)) return null;
+    const quote = str(raw.quote, 350);
+    const passage = normalise(quote);
+    if (!passage || passage.length < 8 || !` ${normalise(text)} `.includes(` ${passage} `)) return null;
+    const stage = STAGES.includes(raw.stage) && raw.stage !== STAGES[0] ? raw.stage : null;
+    const rel = Object.fromEntries(AXES.filter(axis => {
+        const score = raw.rel?.[axis];
+        return Number.isInteger(score) && score !== 0 && score >= SCORE_MIN && score <= SCORE_MAX;
+    }).map(axis => [axis, raw.rel[axis]]));
+    return stage || Object.keys(rel).length ? { ...(stage ? { stage } : {}), rel, quote } : null;
+}
+
 const TOP_KEYS = [
-    'summary', 'scene', 'facts', 'confirmed', 'beliefs', 'settled', 'relationships', 'stats', 'statuses', 'cast_changes',
+    'summary', 'scene', 'facts', 'confirmed', 'beliefs', 'settled', 'relationships', 'prior_relationships', 'stats', 'statuses', 'cast_changes',
     'threads', 'lore', 'contradictions', 'direction',
 ];
 
@@ -96,7 +110,7 @@ export function validateObservation(raw, ctx) {
 
     const delta = {
         summary: '', scene: {}, facts: [], confirmed: [], beliefs: [], settled: [], relationships: [], stats: [], statuses: [],
-        cast_changes: [], threads: [], lore: [], contradictions: [], direction: { beat: 'untouched', clues_found: [] },
+        cast_changes: [], prior_relationships: [], threads: [], lore: [], contradictions: [], direction: { beat: 'untouched', clues_found: [] },
     };
     if (!isObj(raw)) {
         reject('output', 'not an object', raw);
@@ -111,7 +125,7 @@ export function validateObservation(raw, ctx) {
         for (const item of list) {
             if (!isObj(item)) { reject(key, 'not an object', item); continue; }
             if (delta[key].length >= cap) { reject(key, 'over the per-reply cap', item); continue; }
-            const out = fn(ownWords(item));
+            const out = fn(ownWords(item), item);
             if (typeof out === 'string') reject(key, out, item);
             else if (out) { delta[key].push(out); from.set(out, item); accepted++; }
         }
@@ -240,6 +254,17 @@ export function validateObservation(raw, ctx) {
     });
 
     const axisCount = {};
+    const priorSeen = new Set();
+    each('prior_relationships', CAPS.cast_changes, (it, rawItem) => {
+        const who = resolve(it.who);
+        if (!who || !ctx.player || who === ctx.player || resolve(it.toward) !== ctx.player) return 'expected a cast member toward the player';
+        if (priorSeen.has(who)) return 'prior relationship already recorded for this character';
+        const value = validatePriorRelationship(rawItem, ctx.text);
+        if (!value) return 'no valid prior relationship quoted from the reply';
+        priorSeen.add(who);
+        return { who, toward: ctx.player, ...value };
+    });
+
     const PIVOTAL = ['action', 'sacrifice', 'shared_danger', 'betrayal'];
     const COSTLY = ['sacrifice', 'shared_danger', 'betrayal'];
     each('relationships', CAPS.relationships, (it) => {

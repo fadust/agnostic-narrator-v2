@@ -4,7 +4,7 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { LEAK_PATTERNS } from '../core/text.js';
+import { DIALOGUE_FIXES, LEAK_PATTERNS } from '../core/text.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
@@ -89,6 +89,10 @@ const regexScripts = [
     ...LEAK_PATTERNS.map(p => script(`Narrator: hide ${p.name} (display)`, p, { markdownOnly: true })),
     // Prompt: cleans replies saved before the card was installed.
     ...LEAK_PATTERNS.map(p => script(`Narrator: clean ${p.name} (prompt)`, p, { promptOnly: true })),
+    ...DIALOGUE_FIXES.flatMap(({ name, pattern }) => [
+        script(`Narrator: remove ${name}`, pattern, { placement: [2], replaceString: '$1' }),
+        script(`Narrator: hide ${name}`, pattern, { placement: [2], replaceString: '$1', markdownOnly: true, promptOnly: true }),
+    ]),
 ];
 
 // ---------------------------------------------------------------- the card (Character Card V3)
@@ -112,7 +116,7 @@ const card = {
         group_only_greetings: [GROUP_OPENING],
         tags: ['narrator', 'storyteller', 'game master'],
         creator: 'fadust',
-        character_version: '0.3.0-rc.2',
+        character_version: '0.3.0-rc.3',
         extensions: {
             talkativeness: '1',
             fav: false,

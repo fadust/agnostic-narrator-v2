@@ -2,6 +2,12 @@
 
 Newest first. Each entry says which parts changed, so you know what to re-import.
 
+# 0.3.0-rc.3 (Agnostic Narrator V2)
+
+- The Director and card remove the enclosing quotes and backticks when stripping an echoed Director block that occupies quoted inline code. The reply cleanup also clears blank quote artifacts already present in the output.
+- Cast introductions can use quoted relationship history from cards, lore or the story to set familiarity and supported feelings toward the player. Later changes and player edits keep their values.
+- The Narrator card and both companion presets ask the Narrator to weave the player's supplied dialogue and actions into the scene. Update the extension, card and both presets together.
+
 # 0.3.0-rc.2 (Agnostic Narrator V2)
 
 - Content guidance lives in two separate presets. PG is for general audiences. Mature allows NSFW and NSFL material where it fits the story.

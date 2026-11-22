@@ -2,8 +2,14 @@
 
 export const FALLBACK_NOTE = 'The director has no notes ready for this turn. Narrate from the chat as it stands.';
 
+const QUOTED_DIRECTOR_CODE = String.raw`["“][ \t]*\x60[ \t]*<(director_notes|story_context)>[\s\S]*?</\1>[ \t]*\x60`;
+
 /** Patterns for director text that must never stay in a saved reply. Source strings, so they can be reused as ST regex scripts. */
 export const LEAK_PATTERNS = [
+    // Take the wrapper with the block. A quote followed by speech is the opening quote of the real line.
+    { name: 'quoted director code at line end', source: String.raw`(?:[ \t]+|(?<![^\s:*]))${QUOTED_DIRECTOR_CODE}[ \t]*["”][ \t]*(?=(?:\*\*)?[ \t]*\r?$)`, flags: 'gim' },
+    { name: 'director code before dialogue', source: String.raw`(?<![^\s:*])${QUOTED_DIRECTOR_CODE}[ \t]*(?=["“][^\s"“”][^\r\n"“”]*["”])`, flags: 'gi' },
+    { name: 'quoted director code in prose', source: String.raw`(?<![^\s:*])${QUOTED_DIRECTOR_CODE}[ \t]*["”][ \t]+`, flags: 'gi' },
     { name: 'director notes block', source: '<director_notes>[\\s\\S]*?</director_notes>\\s*', flags: 'gi' },
     { name: 'unclosed director notes', source: '<director_notes>[\\s\\S]*$', flags: 'gi' },
     // Spaces after a stray tag go, the line break stays: "\s*" here used to glue the paragraphs either side together.
@@ -16,6 +22,19 @@ export function stripDirector(text) {
     let out = String(text ?? '');
     for (const p of LEAK_PATTERNS) out = out.replace(new RegExp(p.source, p.flags), '');
     return out.trim();
+}
+
+export const DIALOGUE_FIXES = [
+    // A blank quoted prefix immediately before real dialogue on a speaker line.
+    { name: 'blank dialogue prefix', pattern: /^([ \t]*(?:\*\*)?[\p{L}\p{M}][\p{L}\p{M}\p{N} .’'-]{0,60}(?:\*\*)?[ \t]*:(?:\*\*)?[ \t]*)["“](?:[ \t]*\x60[ \t]+\x60[ \t]*|[ \t]+)(?=["“]\S[^\r\n"“”]*["”])/gmu },
+    // An empty quoted string or blank code span after a finished sentence, before any closing bold markers.
+    { name: 'blank dialogue suffix', pattern: /([.!?…])[ \t]+(?:"(?:[ \t]*\x60[ \t]+\x60[ \t]*)?[ \t]*"|“[ \t]*”)(?:[ \t]|&#x20;)*(?=(?:\*\*)?[ \t]*\r?$)/gmu },
+];
+
+export function cleanDialogue(text) {
+    let out = String(text ?? '');
+    for (const { pattern } of DIALOGUE_FIXES) out = out.replace(pattern, '$1');
+    return out;
 }
 
 /**

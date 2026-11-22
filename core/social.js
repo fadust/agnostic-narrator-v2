@@ -1,6 +1,6 @@
 // Stats and relationships become words here. No number, rank letter or score ever leaves this file toward the narrator.
 
-import { BANDS, STATS, STAT_BASELINE } from './enums.js';
+import { BANDS, STAGES, STATS, STAT_BASELINE } from './enums.js';
 import { bandOf, stanceBand } from './state.js';
 import { nameKey } from './util.js';
 
@@ -78,8 +78,9 @@ export function castLine(state, name, full = true) {
     const player = state.meta.player || 'the player';
     const band = bandOf(c.rel);
     let line = `- ${name}, toward ${player}: ${band}`;
-    if (!full) return line;
-    const extras = [tellsFor(c, band)];
+    const stage = STAGES.indexOf(c.stage) > 0 ? c.stage : '';
+    if (!full) return stage ? `${line} (${stage})` : line;
+    const extras = [stage, tellsFor(c, band)].filter(Boolean);
     if (c.rel.tension >= 4) extras.push('strained right now');
     if (c.rel.desire >= 4) extras.push('drawn to them');
     line += ` (${extras.join('; ')})`;

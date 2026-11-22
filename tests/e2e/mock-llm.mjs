@@ -38,6 +38,9 @@ export function startMock(port = 8124) {
                 summary: sentences[0] ?? 'Nothing happened.',
                 scene: { present, mood: 'watchful', initiative: 'player', ...(loc ? { location: { value: loc[1], quote: sentences.find(s => s.includes(loc[1])) } } : {}) },
                 cast_changes,
+                prior_relationships: sentences.filter(s => s.includes('Old Tam has trusted Rowan since the winter floods')).map(quote => ({
+                    who: 'Old Tam', toward: 'Rowan', stage: 'familiar', rel: { trust: 6 }, quote,
+                })),
                 facts: [
                     ...sentences.map(s => ({ fact: s.replace(/[.!?]$/, ''), quote: s, certainty: 'stated', witnesses: 'present' })),
                     { fact: 'The moon is made of cheese', quote: 'this sentence appears nowhere in the reply', certainty: 'stated' },
@@ -91,9 +94,13 @@ export function startMock(port = 8124) {
         turn++;
         const lastUser = [...messages].reverse().find(m => m.role === 'user');
         const said = flat(lastUser ? [lastUser] : []).slice(0, 60).replace(/\s+/g, ' ');
-        let text = control.narration ?? `Mira nods toward the well at the Greywell Square as turn ${turn} begins. Old Tam mutters about the bitter water. The wind carries dust across the stones.`;
+        const tam = control.priorHistory ? 'Old Tam has trusted Rowan since the winter floods.' : 'Old Tam mutters about the bitter water.';
+        let text = control.narration ?? `Mira nods toward the well at the Greywell Square as turn ${turn} begins. ${tam} The wind carries dust across the stones.`;
+        control.priorHistory = false;
         control.narration = null;
         if (control.leak) text = `<director_notes>\nscene_intent: leaked\n</director_notes>\n${text}`;
+        if (control.emptyDialogue) text += '\n\n**Mira: "\x60 <director_notes>Test note</director_notes>\x60 "Thank you." She stepped back. "\x60 <story_context>Test context</story_context>\x60"**';
+        control.emptyDialogue = false;
         void said;
         return { kind: 'narrator', text };
     }

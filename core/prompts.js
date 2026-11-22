@@ -3,7 +3,7 @@
 
 import {
     AGE_GROUPS, ARC_TENSION, AXES, BANDS, BEAT_PROGRESS, BEAT_TYPES, CAPS, CAST_CHANGES, CLUE_ROUTES, EVIDENCE, GENRES, LETHALITY, LORE_KINDS,
-    SEVERITY, STATS, TEMPERAMENTS, TEMPO,
+    SEVERITY, STAGES, STATS, TEMPERAMENTS, TEMPO,
 } from './enums.js';
 import { FACT_KINDS } from './enums.js';
 import { agendaLines } from './agenda.js';
@@ -31,6 +31,7 @@ Rules:
 5. Use only the listed values where a field offers a list. Use character names exactly as given under Characters; a new character must first appear in cast_changes as "introduced". Introduce someone only when they have a proper name and take real part in the scene: they speak with or act toward the player character, or the story plainly turns on them. Passers-by are not characters: people known only by a role ("the cobbler", "a clothier", "the restaurant keeper"), crowds, and named people who are only glimpsed or mentioned. Do not introduce them or list them in "present"; what they do can still be a fact. The exception: someone known only by a role who speaks under it (a line like "The hall master: ...") or takes real part is a character; introduce them by the role without "the" ("Hall master"). When such a character's own name is revealed, use cast_changes "named" with "name": the new name.
 6. Relationship changes need real evidence in the REPLY, and deeds weigh more than words. Words alone (praise, thanks, a kind word, a promise not yet kept) are at most "minor", often nothing: a kind word is not trust. A deed that costs or risks something is "major": taking a risk for someone, giving something up, keeping a promise, protecting or standing up for them; the same for harm: lying to them, abandoning them, hurting them. "pivotal" is only for a life-changing act: saving a life, a real sacrifice, a betrayal. Each new deed counts again. Judge by the cause, not the reaction: "category" and "weight" describe what caused the change, usually what the player character did, and "quote" shows that deed. Tending her wound, standing between her and danger or giving up something is "action" or "sacrifice" and at least "major", even when she only answers with a word ("Don't stop."). "words" is only for when words were the whole cause. "toward" is the player character's name unless the REPLY is about two other characters. "stats" records a change in ability that outlasts the scene; anything that heals or passes (a wound, poison, exhaustion, fear) is a status. Stats move both ways, alongside the story. "small": hard training or practice shown in the REPLY, a lesson learned, a skill used well under pressure, or a decline from age, sickness or disuse. "large": a decisive change, such as a maiming or crippling injury, a lost limb or sense, a breakthrough, a power gained or lost, or long training completed across a time skip. One event may move several stats (a lost hand: strength and agility down).
 7. Lore drafts are for things that will matter again: a named person, place, item, a decisive event, or a change to the world. One or two sentences, written as current fact. Never plans, intentions or beliefs.
+   When the REPLY first establishes that a cast member already knew the player character before this scene, use "prior_relationships". Quote their established history in the REPLY. Stage measures familiarity, independent of warmth: acquainted coworkers can be neutral, old friends can be close, and longtime enemies can be familiar and distrustful. Give only supported feelings of the cast member toward the player character, as signed integers from -10 to 10. Use positive tension for strain. Never infer desire from familiarity or a role. Leave this field empty for new meetings, guesses, or events that just occurred. Use "relationships" for new changes only.
 8. Presence: keep everyone listed under "Scene before the REPLY" unless the REPLY shows them leaving, or cuts away to another place or other people: then set "cut": true and list only who is there when the REPLY ends. Someone who leaves, or is left behind, goes in cast_changes as "departed" with a quote; silence is not departure.
 9. A contradiction is when the REPLY plainly conflicts with a line under Established facts, or with a character's recorded condition or abilities (a dead character speaking, a slower runner catching a faster one with no stated reason). Give a one-line "correction" the narrator can apply next turn. A correction overrides the story, so be certain: a character may have learned something off-stage, changed their mind or lied. When in doubt, leave the list empty.
 10. "secret": true only when the REPLY shows someone deliberately keeping the fact from another character. "beliefs" are for a character shown believing something, above all something mistaken. A thread is an unresolved question, promise or danger the story has raised; open one only when the REPLY raises it. To advance or resolve a thread, copy its id from the Open threads list: thread ids start with "t-". Ids from Unconfirmed belong only in "confirmed", clue ids only in "clues_found"; neither ever goes in "threads". When Open threads lists none, a thread can only be opened.
@@ -50,6 +51,7 @@ Shape (all sections optional except summary):
   "beliefs": [{"who": "", "believes": "", "true": false, "quote": ""}],
   "settled": [{"text": "what is closed, as plain fact", "quote": "from the REPLY or the player's message"}],
   "relationships": [{"who": "", "toward": "", "axis": "${list(AXES)}", "dir": "up | down", "weight": "minor | major | pivotal", "category": "${list(EVIDENCE)}: what caused the change, not how it shows", "quote": "the cause: the deed or words that moved them"}],
+  "prior_relationships": [{"who": "", "toward": "player character's name", "stage": "${list(STAGES.slice(1))}, or omit", "rel": {"trust": 0, "affection": 0, "desire": 0, "tension": 0}, "quote": "the passage establishing the prior history"}],
   "stats": [{"who": "", "stat": "${list(STATS)}", "dir": "up | down", "size": "small | large", "quote": ""}],
   "statuses": [{"who": "", "op": "add | treat | worsen | clear", "status": "injury, poison, exhaustion, fear ...", "severity": "${list(SEVERITY)}", "affects": "one stat or null", "quote": ""}],
   "threads": [{"op": "open | advance | resolve", "id": "advance and resolve only: a t- id from Open threads", "text": "", "quote": ""}],
@@ -240,7 +242,7 @@ ${JSON_ONLY}
 // ---------------------------------------------------------------- profile generator
 
 /** Profile slice: one character card (or the persona) and the genre scale. */
-export function profilePrompt({ name, card, genre, isPlayer, story = false }) {
+export function profilePrompt({ name, card, genre, isPlayer, player, story = false }) {
     return [
         {
             role: 'system',
@@ -256,6 +258,8 @@ Set each attribute from what the text shows, reasoning the way a person would:
 - Race or species shifts the baseline only where the text or the genre says how.
 Anything the text does not support stays at 30. Story notes are thin: move an attribute only on something they show, and keep the rest at 30.
 
+For each non-player character, include "prior_relationship" only when the source text establishes that they already knew the named player character. Quote the passage from the source. Stage measures familiarity: acquaintance for little history, familiar for repeated contact, close for substantial personal history, bonded for a deep lasting connection. Familiarity can coexist with hostility. For feelings, use signed integers from -10 to 10 and include only the axes the passage supports. Positive tension means strain. A title, family tie or shared workplace alone does not prove affection, trust or desire. Do not infer the player character's feelings. For story notes use established background from before their current on-screen interactions; omit changes that happened during play. Omit "prior_relationship" when the text gives no prior history or this is the player character.
+
 ${JSON_ONLY}
 {
   "name": "the name the story calls this character by, taken from the card text; the card's title may be something else",
@@ -267,6 +271,7 @@ ${JSON_ONLY}
   "stats": {${STATS.map(s => `"${s}": 30`).join(', ')}},
   "temperament": "${list(TEMPERAMENTS)}",
   "tells": {${BANDS.map(b => `"${b}": "how THIS character behaves toward someone they are ${b} to, under 15 words"`).join(', ')}},
+  "prior_relationship": {"stage": "${list(STAGES.slice(1))}, or omit", "rel": {"trust": 0, "affection": 0, "desire": 0, "tension": 0}, "quote": "verbatim history from the source"},
   "unprompted": "one thing they do in a scene without being asked"
 }
 If the user message says this is the player character: describe ability only; leave "tells" empty and "unprompted" empty, and never split the card.
@@ -278,6 +283,7 @@ One entry per person, each with the fields above. People only mentioned in their
         {
             role: 'user', content: [
                 section(`${story ? 'Story notes' : 'Card'}: ${name}`, card),
+                player && !isPlayer ? section('Player character', player) : '',
                 section('Genre for scale', `${genre?.dominant || 'unspecified'}${genre?.lethality ? `, lethality ${genre.lethality}` : ''}`),
                 isPlayer ? 'This is the player character.\n' : '',
                 story ? 'These are story notes about one person: profile only them, never split.\n' : '',

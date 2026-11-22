@@ -6,6 +6,7 @@ import { awakeThreads } from './state.js';
 import { arr, clamp, clip, isObj, str } from './util.js';
 import { validateRenewals } from './agenda.js';
 import { beatText } from './beat.js';
+import { validatePriorRelationship } from './validate.js';
 
 const strs = (v, max, len = 160) => arr(v).map(x => str(x, len)).filter(Boolean).slice(0, max);
 const pick = (v, list, fallback) => (list.includes(v) ? v : fallback);
@@ -200,13 +201,13 @@ export function rotate(beats, log) {
  * One character's profile, or, for a card that holds several people, `{ people: [{ name, ...profile }] }`.
  * A "characters" list with fewer than two named, valid entries is read as one character.
  */
-export function validateProfile(raw, allowMultiple = true) {
+export function validateProfile(raw, allowMultiple = true, sourceText = '') {
     if (isObj(raw) && Array.isArray(raw.characters)) {
         const seen = new Set();
         const people = [];
         for (const c of raw.characters.slice(0, 6)) {
             const name = str(c?.name, 60);
-            const v = name && !seen.has(name.toLowerCase()) ? profileOf(c) : null;
+            const v = name && !seen.has(name.toLowerCase()) ? profileOf(c, sourceText) : null;
             if (v) { seen.add(name.toLowerCase()); people.push({ name, ...v }); }
         }
         if (people.length >= 2) return allowMultiple
@@ -215,11 +216,11 @@ export function validateProfile(raw, allowMultiple = true) {
         if (people.length === 1) return { ok: true, value: people[0] };
         return { ok: false, error: 'no usable character in "characters"' };
     }
-    const v = profileOf(raw);
+    const v = profileOf(raw, sourceText);
     return v ? { ok: true, value: { name: str(raw.name, 60), ...v } } : { ok: false, error: 'no summary' };
 }
 
-function profileOf(raw) {
+function profileOf(raw, sourceText) {
     if (!isObj(raw) || !str(raw.summary)) return null;
     const stats = {};
     for (const s of STATS) {
@@ -228,6 +229,7 @@ function profileOf(raw) {
     }
     const tells = {};
     if (isObj(raw.tells)) for (const b of BANDS) { const t = str(raw.tells[b], 120); if (t) tells[b] = t; }
+    const priorRelationship = validatePriorRelationship(raw.prior_relationship, sourceText);
     return {
         summary: str(raw.summary, 500),
         gender: str(raw.gender, 40),
@@ -238,6 +240,7 @@ function profileOf(raw) {
         temperament: pick(raw.temperament, TEMPERAMENTS, 'reserved'),
         tells: Object.keys(tells).length ? tells : null,
         unprompted: str(raw.unprompted, 160),
+        ...(priorRelationship ? { priorRelationship } : {}),
     };
 }
 

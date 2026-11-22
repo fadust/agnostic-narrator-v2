@@ -7,6 +7,7 @@ import { buildStoryBlock } from '../../core/brief.js';
 import { CONCLUSION_SYSTEM, conclusionPrompt } from '../../core/prompts.js';
 import { logOp, reconcile, replay, visibleText } from '../../core/state.js';
 import { hash } from '../../core/util.js';
+import { cleanDialogue, stripDirector } from '../../core/text.js';
 import { NARRATOR, narr, user } from './helpers.mjs';
 
 function chatWithSummaries() {
@@ -53,10 +54,40 @@ test('a planned off-screen outcome is weighed major, also once confirmed', () =>
     assert.equal(o.weight, 'major');
 });
 
-test('a stray closing tag is removed without gluing the paragraphs around it', async () => {
-    const { stripDirector } = await import('../../core/text.js');
+test('a stray closing tag is removed without gluing the paragraphs around it', () => {
     assert.equal(stripDirector('Prose one.</director_notes>\nProse two.'), 'Prose one.\nProse two.');
     assert.equal(stripDirector('Prose one. </director_notes>   Prose two.'), 'Prose one. Prose two.');
+});
+
+test('blank code and quote prefixes are removed from speaker lines without changing the speech', () => {
+    const dialogue = '**Elizabeth: "Thank you." She turned away.**';
+    assert.equal(cleanDialogue('**Elizabeth: "\x60 \x60 "Thank you." She turned away.**'), dialogue);
+    assert.equal(cleanDialogue('**Elizabeth: " "Thank you." She turned away.**'), dialogue);
+    assert.equal(cleanDialogue(dialogue), dialogue);
+    const genuine = '**Elizabeth:** " " She let the pause linger.\nThe example used "\x60 \x60 " in an empty field.';
+    assert.equal(cleanDialogue(genuine), genuine);
+});
+
+test('empty quotes after a finished sentence are removed while the dialogue and bold markers survive', () => {
+    const action = 'The courier folded the letter and left it on the desk.';
+    const dialogue = 'Mira: "Wait for me at the gate." Her voice dropped.';
+    assert.equal(cleanDialogue(`**${action} ""**\r\n\r\n**${dialogue} ""&#x20;**`), `**${action}**\r\n\r\n**${dialogue}**`);
+    assert.equal(cleanDialogue(`${action} "\x60 \x60 "\n${dialogue} "\x60 \x60 "`), `${action}\n${dialogue}`);
+    const ordinary = 'Bianca: "Thank you."\nThe field contains "".\nThe value is ""\n"I left," she said.';
+    assert.equal(cleanDialogue(ordinary), ordinary);
+});
+
+test('the note stripper removes quoted code wrappers and keeps actual dialogue, spaces and bold', () => {
+    const wrappedNote = '\x60 <director_notes>Test note</director_notes>\x60';
+    const prefix = `**Mira: "${wrappedNote} "Thank you."**`;
+    const suffix = `**The courier folded the letter. "${wrappedNote}"**`;
+    const context = '\x60 <story_context>Test context</story_context> \x60';
+    assert.equal(stripDirector(prefix), '**Mira: "Thank you."**');
+    assert.equal(stripDirector(suffix), '**The courier folded the letter.**');
+    assert.equal(stripDirector(`Mira paused. “${context}” "Thank you."`), 'Mira paused. "Thank you."');
+    assert.equal(stripDirector(`"${wrappedNote}"\nNext line.`), 'Next line.');
+    assert.equal(stripDirector('Mira said "keep \`this\`."'), 'Mira said "keep \`this\`."');
+    assert.equal(stripDirector(`"Thank you."\nNext line. "${wrappedNote}"\r\nLast line.`), '"Thank you."\nNext line.\r\nLast line.');
 });
 
 test('BaiBai Book item and variable blocks are removed before the director reads a reply', async () => {

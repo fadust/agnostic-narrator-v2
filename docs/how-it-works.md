@@ -95,14 +95,14 @@ The list of who is in the scene only grows by the observer's word. A character l
 
 ## Abilities and relationships
 
-Each character has seven attributes on a private scale and four relationship axes toward the player. Neither is rolled, and no number reaches the narrator. Before each turn code turns them into words:
+The Cast tab shows the seven abilities and four feelings the Director keeps on record. When a character's profile or the narration establishes prior history with the player, the Director can fill the starting stage and any feelings supported by that history. Later events and Cast edits update those fields.
 
-- a relationship **band** (hostile, wary, neutral, warm, devoted) and that character's own behaviour at that band
-- one phrase per stand-out ability
-- a comparison when you act against someone
-- an **attempt tier** when the verb, the opponent and both sets of abilities are unambiguous
+- **Trust and affection** are averaged into a band from hostile to devoted. That band chooses the character's behaviour cue. Familiarity has its own stage, so a longtime rival can be familiar and wary. The planner sees the band and stage when it plans around the cast.
+- **Desire and tension** add separate cues at +4 or more, such as “drawn to them” or “strained right now.” Stances toward other cast members become cues when both people are present.
+- **Abilities** such as strength and agility become descriptions such as “strong” or “quick.” The Director compares relevant abilities when the player's turn suggests an exchange. Conditions can lower effective abilities for those comparisons.
+- **Attempt tiers** apply when the Director can identify one opposed ability and one opponent with stats on record. The result guides the outcome as easy, costly, risky, or beyond the player's current ability. Without a tier, the narrator uses the cast descriptions and scene.
 
-A missing tier is a safe failure: the narrator judges from the cast lines. A wrong tier is not safe, so the bar for sending one is high.
+The narrator receives these cues in words and writes the reactions and consequences. The Director uses fixed comparisons and changes the scores when the observer records an event with evidence from the story.
 
 ## Planning
 

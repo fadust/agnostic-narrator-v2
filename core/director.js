@@ -22,23 +22,20 @@ function spineCast(state) {
 }
 
 /**
- * Cast members with no starting stats whom an authored lorebook entry describes: the entry's title or a key is their
- * name (the entry is about them: a place or faction entry that merely lists them is not taken), and its opening names them.
- * The longest such entry wins. Card people, the player character and anyone already profiled from this entry are skipped.
+ * Profiles for unprofiled cast and saved lore profiles that predate relationship history. The entry's title or
+ * first key and its opening must name the character. Cards and the player character have their own profiles.
  */
 export function loreCards(state, entries) {
     const fromCards = new Set(Object.entries(state.cards ?? {}).filter(([, v]) => !v.lore).flatMap(([, v]) => v.people ?? []));
     const out = [];
     for (const [name, c] of Object.entries(state.cast ?? {})) {
-        if (c.stats || c.pc || name === state.meta?.player || fromCards.has(name)) continue;
-        const low = name.toLowerCase();
-        const named = (t) => words(String(t).slice(0, 200)).includes(words(name));
-        const entry = arr(entries)
-            .filter(e => [e.comment, arr(e.keys)[0]].some(k => String(k ?? '').trim().toLowerCase() === low) && named(e.content))
-            .sort((a, b) => b.content.length - a.content.length)[0];
-        if (!entry || entry.content.trim().length < 20) continue;
+        const saved = state.cards?.[name];
+        if (c.pc || name === state.meta?.player || fromCards.has(name)) continue;
+        if (c.stats && (!saved?.lore || saved.relationshipPlayer === state.meta.player)) continue;
+        const entry = characterLore(name, entries);
+        if (!entry) continue;
         const h = hash(entry.content);
-        if (state.cards?.[name]?.hash === h) continue;
+        if (saved?.hash === h && saved.relationshipPlayer === state.meta.player) continue;
         out.push({ name, text: entry.content, hash: h, aliases: arr(entry.keys) });
     }
     return out;
@@ -46,18 +43,26 @@ export function loreCards(state, entries) {
 
 const words = (t) => ` ${String(t).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()} `;
 
+function characterLore(name, entries) {
+    const low = name.toLowerCase();
+    return arr(entries).filter(e => [e.comment, arr(e.keys)[0]].some(k => String(k ?? '').trim().toLowerCase() === low)
+        && str(e.content, 20).length >= 20 && words(e.content.slice(0, 200)).includes(words(name)))
+        .sort((a, b) => b.content.length - a.content.length)[0];
+}
+
 /**
- * Cast members the story brought in with no card and no lorebook entry, and no stats yet: their notes are what the story
- * has shown of them (appearance and summary on record, facts naming them, and the sentences of the replies that name
- * them, earliest first). Profiled once: the op marks them, so a later pass does not ask again even if stats are missing.
+ * Cast members introduced in play with no card or lore profile. Use their recorded appearance, facts and the
+ * sentences that name them. Refresh legacy story profiles once to look for relationship history.
  */
 export function storyCards(state, chat, narrator, entries, cap = 1800) {
     const fromCards = new Set(Object.entries(state.cards ?? {}).filter(([, v]) => !v.lore).flatMap(([, v]) => v.people ?? []));
     const lore = new Set(loreCards(state, entries).map(c => c.name));
-    const texts = arr(chat).filter(m => !m.is_user && !m.is_system).map(m => visibleText(m, narrator));
+    const texts = arr(chat).filter(m => !m.is_system).map(m => visibleText(m, narrator));
     const out = [];
     for (const [name, c] of Object.entries(state.cast ?? {})) {
-        if (c.stats || c.pc || name === state.meta?.player || fromCards.has(name) || lore.has(name) || state.cards?.[name]) continue;
+        const saved = state.cards?.[name];
+        if (c.pc || name === state.meta?.player || fromCards.has(name) || lore.has(name)) continue;
+        if (saved ? saved.hash !== 'story' || saved.relationshipPlayer === state.meta.player : c.stats) continue;
         const key = words(name);
         const sentences = [];
         for (const t of texts) {
@@ -850,18 +855,29 @@ export class Director {
             const state = this.view();
             for (const card of candidates()) {
                 const version = card.hash ?? hash(card.text);
-                if (!str(card.text, 20) || (source === 'card' && state.cards[card.name]?.hash === version)) continue;
+                const saved = state.cards[card.name];
+                const player = state.meta.player;
+                const ownLore = source === 'card' && !card.isPlayer
+                    ? [...new Set([card.name, ...arr(saved?.people)].map(name => characterLore(name, this.host.loreEntries?.())))]
+                        .filter(Boolean).map(entry => entry.content).join('\n\n').slice(0, 1800)
+                    : '';
+                const loreHash = ownLore ? hash(ownLore) : null;
+                if (!str(card.text, 20) || (source === 'card' && saved?.hash === version
+                    && (card.isPlayer || (saved.relationshipPlayer === player && (!loreHash || saved.relationshipLore === loreHash))))) continue;
                 const key = source + ':' + card.name;
                 eligible.add(key);
                 const failed = this.profileFails.get(key);
-                const attempts = failed?.version === version ? failed.attempts : 0;
+                const attemptVersion = loreHash ? `${version}:${loreHash}` : version;
+                const attempts = failed?.version === attemptVersion ? failed.attempts : 0;
                 if (attempts >= this.cfg().maxRetries && failed) continue;
                 const basis = source !== 'card' ? this.basis() : undefined;
                 try {
+                    const material = ownLore ? `${card.text}\n\nAuthored lore:\n${ownLore}` : card.text;
+                    const sourceText = player ? material.replace(/\{\{user\}\}/gi, () => player) : material;
                     const value = await this.json('profile', profilePrompt({
-                        name: card.name, card: card.text, genre: state.genre,
+                        name: card.name, card: sourceText, genre: state.genre, player,
                         isPlayer: !!card.isPlayer, story: source === 'story',
-                    }), raw => validateProfile(raw, source === 'card' && !card.isPlayer));
+                    }), raw => validateProfile(raw, source === 'card' && !card.isPlayer, !card.isPlayer && player ? sourceText : ''));
                     if (!this.owns(epoch)) return false;
                     if (source !== 'card' && !this.view().cast[card.name]) {
                         this.profileFails.delete(key);
@@ -870,6 +886,9 @@ export class Director {
                     if (source !== 'card') value.name = card.name;
                     const logged = this.logSetup(epoch, {
                         kind: 'profile', by: 'setup', name: card.name, value, cardHash: version, pc: !!card.isPlayer,
+                        ...(!card.isPlayer ? { relationshipPlayer: player } : {}),
+                        ...(loreHash ? { relationshipLore: loreHash } : {}),
+                        ...(saved && !card.isPlayer && (source !== 'card' || saved.hash === version) ? { relationshipOnly: true } : {}),
                         ...(card.isPlayer ? { force: true } : {}),
                         ...(card.aliases?.length ? { aliases: card.aliases } : {}),
                         ...(source !== 'card' ? { lore: true } : {}),
@@ -894,7 +913,7 @@ export class Director {
                         return wrote;
                     }
                     this.profileConnectionFailure = null;
-                    this.profileFails.set(key, { name: card.name, source, version, attempts: attempts + 1, error });
+                    this.profileFails.set(key, { name: card.name, source, version: attemptVersion, attempts: attempts + 1, error });
                     this.updateProfileWarning();
                 }
             }

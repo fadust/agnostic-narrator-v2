@@ -173,7 +173,9 @@ await check('chat start: the story profile is drafted and mirrored as flags', as
     assert(vars.nar_genre_fantasy === '1' && vars.nar.genre === 'fantasy', JSON.stringify(vars));
 });
 
-await send('I walk to the well and look around.');
+mock.control.priorHistory = true;
+const mixedTurn = 'I walk to the well and look around. "Does anyone know what happened?"';
+await send(mixedTurn);
 await check('turn 1: brief sits just before the player message; story block and gated genre craft are in the prompt', async () => {
     const p = lastPrompt();
     const text = flat(p);
@@ -185,6 +187,10 @@ await check('turn 1: brief sits just before the player message; story block and 
     assert(text.includes('Fantasy craft:'), 'fantasy craft entry did not fire');
     assert(!text.includes('Horror craft:') && !text.includes('{{if'), 'ungated or unresolved lore');
     assert((text.match(/<director_notes>\n/g) ?? []).length === 1, 'brief sent more than once');
+    assert(String(p[userAt].content).includes(mixedTurn), 'the user dialogue or action was lost in prompt assembly');
+    assert(text.includes('weave both into the same passage') && text.includes('Preserve the player\'s spoken words'),
+        'the card and preset must both require rendering the supplied dialogue and action');
+    assert(presetMain('PG').includes('weave both into the same passage'), 'the PG preset lost the shared instruction');
 });
 await check('the reply is read: quoted facts recorded, the unquoted one rejected, place and cast established', async () => {
     const s = await view();
@@ -193,6 +199,8 @@ await check('the reply is read: quoted facts recorded, the unquoted one rejected
     assert(s.meta.rejected >= 1, 'no rejection counted');
     assert(s.scene.location.established && s.scene.location.value === 'the Greywell Square', JSON.stringify(s.scene.location));
     assert(s.scene.present.includes('Mira') && s.cast.Mira, 'Mira not in cast');
+    assert(s.cast['Old Tam'].stage === 'familiar' && s.cast['Old Tam'].rel.trust === 6, 'prior history was not recorded');
+    assert(s.cast.Mira.stage === 'stranger' && s.cast.Mira.rel.trust === 1, 'Mira had no prior history; only her current nod was recorded');
 });
 await check('the planner ran after the first reply; the player profile was derived from the persona', async () => {
     const s = await view();
@@ -208,6 +216,7 @@ await check('turn 2: one intent, never the queue; cast lines in words; lore keys
     assert(brief.includes('scene_intent: let the bitter taste'), `no intent in ${brief}`);
     assert(!text.includes('SECRET_SECOND_BEAT'), 'the queue leaked into the prompt');
     assert(/- Mira, toward Rowan: neutral/.test(brief), `no cast line: ${brief}`);
+    assert(/- Old Tam, toward Rowan: warm \(familiar;/.test(brief), `prior history missing from narrator guidance: ${brief}`);
     assert(!/\d/.test(brief.replace(/turn \d+/g, '')), `a number reached the narrator: ${brief}`);
     const scan = await ev(() => window.narratorDirector.brief().scan);
     assert(scan.includes('Mira') && scan.includes('Greywell'), `scan text: ${scan}`);
@@ -253,15 +262,19 @@ await check('swipe: the rejected swipe leaves nothing behind', async () => {
     void prompt;
 });
 
-await check('a forced leak is absent from the saved reply and from the next prompt', async () => {
+await check('a leaked note and blank dialogue quotes are absent from the saved reply and next prompt', async () => {
     mock.control.leak = true;
+    mock.control.emptyDialogue = true;
     await send('I greet the captain.');
     mock.control.leak = false;
     const saved = await ev(() => { const m = SillyTavern.getContext().chat.at(-1); return m.mes + JSON.stringify(m.swipes ?? []); });
     assert(!saved.includes('director_notes'), `leak saved: ${saved.slice(0, 120)}`);
+    const dialogue = '**Mira: "Thank you." She stepped back.**';
+    assert(saved.includes(dialogue) && !saved.includes('\x60 \x60'), 'blank dialogue quotes reached the saved reply');
     await send('I step back.');
     const assistant = lastPrompt().filter(m => m.role === 'assistant').map(m => m.content).join('\n');
     assert(!assistant.includes('director_notes'), 'leak fed back');
+    assert(assistant.includes(dialogue) && !assistant.includes('\x60 \x60'), 'blank dialogue quotes reached the narrator again');
 });
 
 await check('a contradiction is flagged and the next brief carries the correction', async () => {

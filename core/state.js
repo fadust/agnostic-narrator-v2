@@ -360,6 +360,27 @@ export function ensureCast(state, name) {
     return state.cast[name];
 }
 
+/** Fill only relationship fields that have never been established in this chat. */
+function seedRelationship(c, prior) {
+    if (!prior || c.pc) return false;
+    const fields = c.relationshipFields ??= {};
+    let changed = false;
+    if (prior.stage && !fields.stage && c.stage === STAGES[0]) {
+        c.stage = prior.stage;
+        fields.stage = true;
+        changed = true;
+    }
+    for (const axis of AXES) {
+        const key = `rel.${axis}`;
+        if (prior.rel?.[axis] && !fields[key] && c.rel[axis] === 0) {
+            c.rel[axis] = prior.rel[axis];
+            fields[key] = true;
+            changed = true;
+        }
+    }
+    return changed;
+}
+
 /** One band for how an NPC stands toward the player: trust and affection carry it. */
 export function bandOf(rel) {
     const s = (rel.trust + rel.affection) / 2;
@@ -531,11 +552,18 @@ export function applyDelta(state, obs, entry) {
 
     for (const s of arr(d.settled)) addSettled(state, { text: s.text, quote: s.quote, by: s.from, source: mid, turn });
 
+    let seededRelationship = false;
+    for (const prior of arr(d.prior_relationships)) {
+        if (prior.toward !== player || prior.who === player || !Object.hasOwn(state.cast, prior.who)) continue;
+        seededRelationship = seedRelationship(state.cast[prior.who], prior) || seededRelationship;
+    }
     for (const r of arr(d.relationships)) {
         const c = ensureCast(state, r.who);
         const step = WEIGHTS[r.weight] * (r.dir === 'up' ? 1 : -1);
         if (r.toward === player || !player) {
             c.rel[r.axis] = clamp(c.rel[r.axis] + step, SCORE_MIN, SCORE_MAX);
+            const fields = c.relationshipFields ??= {};
+            fields[`rel.${r.axis}`] = true;
             c.evidence.push({ axis: r.axis, dir: r.dir, category: r.category, source: mid });
             if (c.evidence.length > 20) c.evidence.shift();
             // A stage moves one step, and only on evidence from two different categories.
@@ -545,10 +573,12 @@ export function applyDelta(state, obs, entry) {
                 if (!c.stageEvidence.includes(r.category)) c.stageEvidence.push(r.category);
                 if (c.stageEvidence.length >= 2 && at < STAGES.length - 1 && BANDS.indexOf(bandOf(c.rel)) >= 2) {
                     c.stage = STAGES[at + 1];
+                    fields.stage = true;
                     c.stageEvidence = [];
                 }
             } else if (r.axis === 'trust' && r.dir === 'down' && r.weight !== 'minor' && at > 0) {
                 c.stage = STAGES[at - 1];
+                fields.stage = true;
                 c.stageEvidence = [];
             }
         } else if (state.scene.present.includes(r.who) && state.scene.present.includes(r.toward)) {
@@ -647,7 +677,7 @@ export function applyDelta(state, obs, entry) {
     // Found live (19 Nov 2026): the observer names the location on every reply and records background events as minor
     // facts, so only a major fact or a real change of place counts.
     const placeMoved = placeBefore !== null && state.scene.location.established && nameKey(state.scene.location.value) !== placeBefore;
-    const moved = arr(d.facts).some(f => f.weight === 'major')
+    const moved = seededRelationship || arr(d.facts).some(f => f.weight === 'major')
         || ['confirmed', 'beliefs', 'relationships', 'statuses', 'cast_changes', 'threads'].some(k => arr(d[k]).length)
         || arr(dir.clues_found).length > 0 || dir.beat === 'complete' || dir.beat === 'advanced' || placeMoved;
     state.meta.quiet = moved ? 0 : (state.meta.quiet ?? 0) + 1;
@@ -734,7 +764,23 @@ export function applyOp(state, op, entry, chatMids) {
             // (audit, 21 Nov 2026: a name from a discarded swipe stayed in the cast and moved onto another man).
             if (op.lore && !op.pc && !names.some(n => state.cast[n])) break;
             const before = state.cards[op.name]?.people ?? [op.name];
-            state.cards[op.name] = { hash: op.cardHash ?? null, people: names, ...(op.lore ? { lore: true } : {}) };
+            const relationshipMeta = {
+                ...(op.relationshipPlayer !== undefined ? { relationshipPlayer: op.relationshipPlayer } : {}),
+                ...(op.relationshipLore ? { relationshipLore: op.relationshipLore } : {}),
+            };
+            if (op.relationshipOnly && state.cards[op.name]) {
+                Object.assign(state.cards[op.name], relationshipMeta, { hash: op.cardHash });
+                if (op.relationshipPlayer === state.meta.player) for (const p of people) {
+                    const name = before.find(n => nameKey(n) === nameKey(p.name));
+                    if (name && name !== state.meta.player && state.cast[name]) seedRelationship(state.cast[name], p.priorRelationship);
+                }
+                break;
+            }
+            state.cards[op.name] = {
+                hash: op.cardHash ?? null, people: names,
+                ...(op.lore ? { lore: true } : {}),
+                ...relationshipMeta,
+            };
             for (const old of before) {
                 if (names.includes(old) || !state.cast[old]) continue;
                 // A card that holds one person keeps what was recorded under its title; a split card starts its people fresh.
@@ -754,6 +800,7 @@ export function applyOp(state, op, entry, chatMids) {
                 if (p.temperament) c.temperament = p.temperament;
                 if (p.unprompted) c.unprompted = p.unprompted;
                 if (op.pc) c.pc = true;
+                if (op.relationshipPlayer === state.meta.player && p.name !== state.meta.player) seedRelationship(c, p.priorRelationship);
                 // Other names the person goes by, from their lorebook entry's keys (audit, 21 Nov 2026: "the Crimson
                 // Dragon" would otherwise pass as a new person). Never another cast member's name.
                 if (people.length === 1) {
@@ -801,6 +848,8 @@ export function applyOp(state, op, entry, chatMids) {
                 // Stats the player sets by hand are never overwritten by a re-profile.
                 const sm = /^cast\.([^.]+)(\.stats(?:\.|$))?/.exec(op.path ?? '');
                 if (sm && op.by === 'player' && state.cast[sm[1]] && (sm[2] || (op.path === `cast.${sm[1]}` && op.value?.stats))) state.cast[sm[1]].statsByPlayer = true;
+                const rm = /^cast\.([^.]+)\.(stage|rel\.[^.]+)$/.exec(op.path ?? '');
+                if (rm && op.by === 'player' && state.cast[rm[1]]) (state.cast[rm[1]].relationshipFields ??= {})[rm[2]] = true;
             }
             break;
         case 'cast': {
@@ -811,6 +860,7 @@ export function applyOp(state, op, entry, chatMids) {
                 if (!Object.hasOwn(state.cast, name)) break;
                 const person = state.cast[name];
                 for (const [field, value] of arr(op.fields)) {
+                    if (field === 'stage' || field.startsWith('rel.')) (person.relationshipFields ??= {})[field] = true;
                     if (field.startsWith('stats.')) {
                         person.stats ??= Object.fromEntries(STATS.map(stat => [stat, STAT_BASELINE]));
                         person.statsByPlayer = true;
