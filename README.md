@@ -1,6 +1,6 @@
 # Agnostic Narrator
 
-A genre-agnostic narrator for SillyTavern, run by two models. A **narrator card** writes the story. A **director extension** keeps the record, plans ahead and gives the narrator one short note each turn. The chat shows only narration.
+A genre- and content-agnostic storytelling toolkit for SillyTavern. The **Narrator card** gives the narrator its role and genre guidance. The **Director extension** keeps the record, plans ahead and sends one short note per turn. The **selected preset** supplies the content guidance.
 
 Needs SillyTavern 1.19.0 or later. The card uses the macro engine for genre guidance.
 
@@ -14,7 +14,6 @@ Needs SillyTavern 1.19.0 or later. The card uses the macro engine for genre guid
 - **Characters who remember what you did.** Feelings move with deeds, not words. Each character keeps wants of their own. A person known only by a role ("the hall master") becomes a character once they speak, and keeps the role as another name when their own name comes out.
 - **Your own character, profiled from your persona and your lorebook entry.** An S-class fighter written in lore is not treated as an ordinary person.
 - **Settled stays settled.** When you answer something for good, or have had enough of it, the director stops pressing it (`/director settle`). `/director redraft` rebuilds the arc and spine from where the story stands.
-- **Two companion presets.** PG is for a general audience. Mature allows NSFW and NSFL material when the story calls for it. The Director and Narrator card work with either preset.
 - **Failures you can see.** If a part of the director fails, you get a toast saying what failed and what to do. A dot appears on the Director menu entry, and a banner with Retry appears in the inspector. Another toast tells you when it works again.
 - **An inspector.** Seven plain tabs with forms: see and change the scene, the cast, the story profile, the plan and the record, and read what each director call was sent and answered.
 
@@ -24,13 +23,22 @@ Needs SillyTavern 1.19.0 or later. The card uses the macro engine for genre guid
    - **Lean:** open the V2 release ZIP and put its `narrator-director` folder in `SillyTavern/public/scripts/extensions/third-party/`.
    - **From the repository:** in **Extensions → Install extension**, paste `https://github.com/fadust/agnostic-narrator-v2` to install the currently published source.
 2. Import `Narrator.card.json` as a character, and allow its regex scripts when asked.
-3. Import **Narrator Companion (PG)** and **Narrator Companion (Mature)**. Choose either preset in AI Response Configuration.
+3. Import both [companion presets](#presets-and-genres). Choose one in **AI Response Configuration**.
 4. Optional: import `Narrator Director.quickreplies.json` for buttons.
 5. Open a chat with the Narrator and say where the story begins.
 
 For a cast of character cards, make a group with the Narrator and run `/director setup`.
 
 The director can use its own connection profile, a cheaper or faster model than the narrator's. Choose one in **Extensions → Narrator Director**. Without one, it shares the narrator's connection. Full steps: [docs/installation.md](docs/installation.md).
+
+## Presets and genres
+
+| Preset | Content guidance |
+| --- | --- |
+| [Narrator Companion (PG)](dist/Narrator%20Companion%20%28PG%29.preset.json) | General-audience tone with non-graphic violence and implied intimacy. |
+| [Narrator Companion (Mature)](dist/Narrator%20Companion%20%28Mature%29.preset.json) | Allows NSFW and NSFL material where it fits the story. The selected model determines the level of detail. |
+
+In **Director → Story**, set one primary genre and enter up to three secondary genres in **Also**, separated by commas. For example, choose **Romance** with **Mystery, Smut, Drama**. The Director saves `Smut` as `Erotica`. You can switch between PG and Mature while keeping the same genre mix and story stakes.
 
 ## Talking to the director
 
@@ -54,7 +62,7 @@ On a 47-turn test chat the director made about 2.3 calls per turn, or 4 to 5 on 
 | Document | For |
 | --- | --- |
 | [Installation](docs/installation.md) | Installing, choosing models and temperatures, updating, removing |
-| [Playing](docs/playing.md) | Solo and group play, the content rating, talking to the director, the inspector |
+| [Playing](docs/playing.md) | Solo and group play, content presets, talking to the director, and the inspector |
 | [Reference](docs/reference.md) | Every command, setting, note line, variable and file |
 | [Active rules](docs/rules.md) | The exact rules each model is given. Generated from source |
 | [How it works](docs/how-it-works.md) | The design: records, replay, the turn, the notes, lore, planning |
@@ -77,7 +85,7 @@ On a 47-turn test chat the director made about 2.3 calls per turn, or 4 to 5 on 
 
 ## Status
 
-Release candidate 0.3.0-rc.1. Unit tests cover replay, prompts and compatibility. Browser tests run against disposable SillyTavern 1.19.0 with a scripted local model. The earlier 0.2.x versions were also play-tested in long live chats. See [the verification record](docs/v2-verification.md) and [the model fixture suite](docs/development.md#the-fixture-suite).
+The preset setup above is in development and passed 258 unit tests and 40 browser checks in disposable SillyTavern 1.19.0 with a scripted local model. The [published 0.3.0-rc.1 prerelease](https://github.com/fadust/agnostic-narrator-v2/releases/tag/v0.3.0-rc.1) is documented in its [verification record](docs/v2-verification.md).
 
 ## Licence
 
