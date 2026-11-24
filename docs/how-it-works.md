@@ -26,9 +26,10 @@ That one decision handles everything SillyTavern lets you do to a chat:
 | Delete messages | Director removes facts, plans, summaries and lore that depended on the deleted text |
 | Branch or checkpoint | The branch carries its own messages and so rebuilds its own state |
 
-Two kinds of data sit on a message:
+The message carries three kinds of Director data.
 
 - **Bound to the active reply**, in `extra.narrator`: the observer's reading and director operations that rest on the current story, such as a plan. SillyTavern still keeps its swipe text.
+- **Bound to the generated swipe**, in `extra.narratorCue`: the beat and clue IDs that reached the assembled prompt. The observer uses this record for beat progress, and the Now tab shows the sent opening and any evidence it found.
 - **Bound to the message**, at its top level: a stable id, active revision and operations by the player or by setup. Swiping preserves independent player edits and retcons.
 
 ## Nothing counts until accepted
@@ -108,6 +109,10 @@ The narrator receives these cues in words and writes the reactions and consequen
 
 The planner keeps a short horizon: up to three scenes and six beats. The plan is a ride the player may jump on or not. Each beat has a **goal** (what counts as it landing, seen by the planner and the observer) and a **pressure** (an opening the world offers, which is all the narrator sees). A beat may slip to a later scene and says how it reaches the player wherever they are. Plans follow the story profile and never fight it.
 
+The director offers the first queued opening that fits. A required place, required people or an unfinished prerequisite can hold a beat back. An independent opening can come up first, and a held beat stays available when its conditions are met.
+
+The observer quotes the narrator's reply for a world outcome and the player's own message for a player choice. A partial advance keeps the goal open. Earlier saved observations replay with the rules in effect when they were recorded.
+
 The planner runs when the openings run out or threads run low, when you go off-plan, when the scene stalls (N replies recording nothing new), when the spine says you are drifting, and when you ask. Timed re-plans are off by default.
 
 **Plan check.** Code flags each new plan: beats that script the player, copy a spine criterion into the opening, offer a "choice" with no choice, clash with a known name, rest on a time already past, or fight the story's avoid list or lethality. Hollow choices are retyped and past times dropped in code. Only when something needs rewriting does one cheap call rewrite the flagged beats. A rewrite that still trips a flag is refused. If the rewrite fails, beats that script the player or fight the story's profile are dropped.
@@ -118,7 +123,7 @@ The planner runs when the openings run out or threads run low, when you go off-p
 
 **Names already in use.** The block before the chat history lists the names the cast and the lorebook already use, so a new character never gets one of them.
 
-**Patience.** An opening left untouched for N turns (3) is mentioned to the narrator once more as still there, never pressed, and retired two turns later (five if required). Going elsewhere starts the count again.
+**Patience.** An opening sent to the narrator and left untouched for N turns (3) gets one reminder. It is retired after two more untouched offers (five if required). Taking a step toward it or going elsewhere starts the count again.
 
 Code enforces the rest: no three pressure beats in a row; an arc needs at least two possible endings; your message always outranks the opening.
 

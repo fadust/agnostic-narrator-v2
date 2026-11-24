@@ -2,11 +2,12 @@
 // That one rule gives swipe, delete, edit, branch and checkpoint handling for free: change the messages,
 // replay, and the state matches them.
 //
-// Each message carries three things:
+// Director data on a message:
 //   message.narrator_id          a stable id
 //   message.narrator_ops         operations by the player or by setup (edits, retcons, profiles, roll-ups)
 //   message.extra.narrator       { v, obs?: { hash, delta, accepted, rejected, beat }, track?: { covers: [{ mid, hash }], delta, rejected }, ops?: [director ops], err?, trackErr? }
 //                                (track sits on the last reply of a spine-tracker batch; see scan)
+//   message.extra.narratorCue    the cue from the prompt that produced this swipe, with its preceding story basis
 // SillyTavern keeps a separate `extra` per swipe and swaps it when you swipe, so only what belongs to one
 // swipe lives there: the observer's reading (bound to the reply's text by `hash`) and the director's ops that
 // rest on it. The id and the player's own operations sit on the message itself, where swiping cannot touch them.
@@ -18,7 +19,7 @@ import {
 } from './enums.js';
 import { applyPlanSpine, applySpineDelta, applySpineOp, mergeSpineEdit, sceneKey, trackPart } from './spine.js';
 import { applyAgendaOp, applyPlanAgendas, renameAgenda } from './agenda.js';
-import { beatText } from './beat.js';
+import { beatConditions, beatText } from './beat.js';
 import { looksLikeName, stripDirector, stripTags } from './text.js';
 import { arr, clamp, clone, hash, isObj, nameKey, setPath, similarity, uuid } from './util.js';
 
@@ -202,6 +203,10 @@ export function scan(chat, narrator, fingerprints = storyFingerprints(chat, narr
         const text = read?.text ?? '';
         const h = read?.hash ?? '';
         const hashes = kind === 'narration' ? textHashes(m, narrator) : [];
+        const receipt = m.extra?.narratorCue;
+        const cue = kind === 'narration' && isObj(receipt)
+            && (receipt.basis?.mid ?? null) === (chat[i - 1]?.narrator_id ?? null)
+            && validBasis(receipt, fingerprints) ? receipt : null;
         const ops = [...arr(m.narrator_ops), ...arr(rec?.ops)].filter(op => validBasis(op, fingerprints))
             .sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
         const entry = {
@@ -210,7 +215,7 @@ export function scan(chat, narrator, fingerprints = storyFingerprints(chat, narr
             valid: kind === 'narration' && !!rec?.obs && hashes.includes(rec.obs.hash) && (!rec.obs.revision || rec.obs.revision === revision)
                 && (!rec.obs.player || (rec.obs.player.mid === (player?.narrator_id ?? null)
                     && rec.obs.player.revision === (player ? activeRevision(player, narrator) : null))),
-            player,
+            player, cue,
             tracked: false, trackPart: undefined, trackValid: false,
         };
         if (m.is_user) player = m;
@@ -404,8 +409,6 @@ export function castName(title, given) {
 
 /** Card titles to the people they hold, once profiled. A card not yet profiled stands for itself. */
 export const castPeople = (state, titles) => [...new Set(arr(titles).flatMap(t => state.cards?.[t]?.people ?? [t]))];
-
-export const activeBeat = (state) => state.beats.find(b => b.status === 'queued') ?? null;
 
 // ---------------------------------------------------------------- applying an observation
 
@@ -639,6 +642,8 @@ export function applyDelta(state, obs, entry) {
     const dir = d.direction ?? {};
     const beat = state.beats.find(b => b.id === obs.beat && b.status === 'queued');
     if (beat) {
+        const firstScene = state.beats.find(b => b.status === 'queued')?.scene;
+        const legacy = !Object.hasOwn(dir, 'proof');
         beat.offered = (beat.offered ?? 0) + 1;
         for (const id of arr(dir.clues_found)) {
             const clue = arr(beat.clues).find(c => c.id === id);
@@ -647,12 +652,12 @@ export function applyDelta(state, obs, entry) {
         // Patience: replies in a row this opening was offered and left untouched. Going elsewhere (preempted) is the
         // player choosing, and movement toward it is not waiting: both start the count again.
         beat.waiting = dir.beat === 'untouched' || !dir.beat ? (beat.waiting ?? 0) + 1 : 0;
-        if (dir.beat === 'complete') completeBeat(state, beat, mid);
-        else if (dir.beat === 'advanced') {
+        if (dir.beat === 'complete' && (legacy || dir.proof)) completeBeat(state, beat, mid);
+        else if (dir.beat === 'advanced' && (legacy || dir.proof)) {
             beat.progress = (beat.progress ?? 0) + 1;
-            // Three replies moving toward an intent have delivered it, whatever the model calls it.
-            if (beat.progress >= 3) completeBeat(state, beat, mid);
-        } else if (dir.beat === 'preempted') {
+            // Preserve the meaning of observations already saved by older versions.
+            if (legacy && beat.progress >= 3) completeBeat(state, beat, mid);
+        } else if (dir.beat === 'preempted' && (legacy || dir.proof)) {
             beat.preempted = (beat.preempted ?? 0) + 1;
             // Deviation bends the plan: an optional beat the player walked past twice is dropped, never forced back.
             // Passing an opening by once is the player's choice and leaves the rest of the plan standing: only a dropped
@@ -662,13 +667,13 @@ export function applyDelta(state, obs, entry) {
         // An opening the narrator has been handed turn after turn without it being taken is pressure, not direction.
         // It is retired and the planner is asked to think again: two turns after the nudge (five if required).
         const nudge = Number(state.meta.nudgeAfter) > 0 ? Number(state.meta.nudgeAfter) : 3;
-        if (beat.status === 'queued' && beat.offered >= nudge + (beat.required ? 5 : 2)) {
+        if (beat.status === 'queued' && (legacy ? beat.offered : beat.waiting) >= nudge + (beat.required ? 5 : 2)) {
             beat.status = 'skipped';
             state.meta.deviationTurn = turn;
         }
         // The planner's scene has run out of beats: for the spine, the scene is over. A re-plan never ends a scene by
         // itself, however it renames the scenes; only the place changing or the beats running out does.
-        if (beat.status !== 'queued' && !state.beats.some(b => b.status === 'queued' && b.scene === beat.scene)) state.meta.sceneSerial++;
+        if (beat.status !== 'queued' && beat.scene === firstScene && !state.beats.some(b => b.status === 'queued' && b.scene === beat.scene)) state.meta.sceneSerial++;
     }
 
     // Patience: replies in a row that record nothing new, for the stall re-plan. Mood, time and who speaks do not count;
@@ -700,6 +705,7 @@ export function applyDelta(state, obs, entry) {
 function sanitiseBeat(b, id) {
     return {
         id, scene: b.scene ?? '', ...beatText(b), precondition: b.precondition ?? '', type: b.type ?? 'pressure',
+        when: beatConditions(b.when), goal_source: b.goal_source === 'player' ? 'player' : 'reply',
         required: !!b.required, status: 'queued', lore: arr(b.lore).slice(0, 3), serves: typeof b.serves === 'string' ? b.serves : '', plants: Number.isInteger(b.plants) ? b.plants : 0,
         clues: arr(b.clues).slice(0, CAPS.clues).map((c, n) => ({
             id: `${id}-c${n}`, text: c.text ?? '', route: c.route ?? 'place', where: c.where ?? '', found: false,
@@ -723,6 +729,10 @@ export function applyOp(state, op, entry, chatMids) {
             // Never the id of a beat already on record (older records may repeat a plan number).
             const taken = new Set(done.map(b => b.id));
             const fresh = arr(v.beats).map((b, n) => { let id = `b-${tag}-${seq}-${n}`; while (taken.has(id)) id += 'x'; taken.add(id); return sanitiseBeat(b, id); });
+            const idsBySlot = new Map(arr(v.beats).map((b, n) => [b.slot ?? n + 1, fresh[n].id]));
+            for (const beat of fresh) if (Number.isInteger(beat.when.after)) {
+                beat.when.after = idsBySlot.get(beat.when.after) ?? `removed-${beat.when.after}`;
+            }
             state.beats = [...done, ...fresh];
             if (Array.isArray(v.scenes)) state.scenes = clone(v.scenes);
             if (state.arc) {
@@ -1006,7 +1016,11 @@ export function replay(chat, ctx, opts = {}, entries = scan(chat, ctx.narrator))
             if (e.valid && (e.committed || includeProvisional)) {
                 state.meta.turn++;
                 progressStatuses(state);
-                applyDelta(state, e.rec.obs, e);
+                const obs = e.rec.obs;
+                // A changed earlier turn can invalidate the cue without changing the reply's observed facts.
+                const direction = obs.delta.direction;
+                const active = !Object.hasOwn(direction ?? {}, 'proof') || e.cue?.beat === obs.beat;
+                applyDelta(state, active ? obs : { ...obs, beat: null }, e);
             } else if (!e.valid && !e.hidden) {
                 if (e.committed) { state.meta.turn++; state.meta.pending.push(e.mid); }
                 else if (includeProvisional) state.meta.unextracted = e.mid;

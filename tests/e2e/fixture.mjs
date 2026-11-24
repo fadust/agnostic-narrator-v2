@@ -26,7 +26,7 @@ export async function startFixture(source, extensionRoot, chromium, { username =
         throw new Error('Set ST_DIR to a SillyTavern checkout with npm dependencies installed.');
     }
     const sourceRoot = realpathSync(source);
-    const tempRoot = mkdtempSync(join(realpathSync(tmpdir()), 'nd-e2e-'));
+    const tempRoot = mkdtempSync(join(realpathSync(process.env.ND_E2E_TEMP_DIR || tmpdir()), 'nd-e2e-'));
     const host = join(tempRoot, 'host');
     const dataRoot = join(tempRoot, 'profile');
     let mock, child, browser, cleanup;

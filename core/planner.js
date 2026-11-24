@@ -5,7 +5,7 @@ import { SPINE_CAPS, applySpineRewrites, findCriterion, flagSpine, needsNewEndin
 import { awakeThreads } from './state.js';
 import { arr, clamp, clip, isObj, str } from './util.js';
 import { validateRenewals } from './agenda.js';
-import { beatText } from './beat.js';
+import { beatConditions, beatText } from './beat.js';
 import { validatePriorRelationship } from './validate.js';
 
 const strs = (v, max, len = 160) => arr(v).map(x => str(x, len)).filter(Boolean).slice(0, max);
@@ -73,19 +73,26 @@ export function validatePlan(raw, state) {
     // goal: what counts as the beat landing (the record keeper judges by it; the old "intent", kept as its copy).
     // pressure: the opening the narrator is shown. A model answer in the old shape (intent only) still works.
     // The narrator reads these: cut at a sentence end, never mid-word.
-    let beats = arr(raw.beats).filter(isObj).map(b => ({
-        scene: sceneIds.has(b.scene) ? b.scene : (scenes[0]?.id ?? ''),
-        ...beatText(b, text => clip(text, 240)),
-        precondition: clip(b.precondition, 200),
-        type: pick(b.type, BEAT_TYPES, 'pressure'),
-        required: b.required === true,
-        lore: strs(b.lore, 3, 40),
-        clues: arr(b.clues).filter(isObj).slice(0, CAPS.clues).map(c => ({
-            text: clip(c.text, 200), route: pick(c.route, CLUE_ROUTES, 'place'), where: str(c.where, 80),
-        })).filter(c => c.text),
-        serves: servesOf(b.serves, state),
-        plants: plantsOf(b.plants, state),
-    })).filter(b => b.goal).slice(0, CAPS.beats);
+    let beats = arr(raw.beats).map((b, index) => {
+        if (!isObj(b)) return null;
+        const when = beatConditions(b.when);
+        if (!Number.isInteger(when.after) || when.after > index) when.after = '';
+        return {
+            slot: index + 1,
+            scene: sceneIds.has(b.scene) ? b.scene : (scenes[0]?.id ?? ''),
+            ...beatText(b, text => clip(text, 240)),
+            precondition: clip(b.precondition, 200),
+            when, goal_source: b.goal_source === 'player' ? 'player' : 'reply',
+            type: pick(b.type, BEAT_TYPES, 'pressure'),
+            required: b.required === true,
+            lore: strs(b.lore, 3, 40),
+            clues: arr(b.clues).filter(isObj).slice(0, CAPS.clues).map(c => ({
+                text: clip(c.text, 200), route: pick(c.route, CLUE_ROUTES, 'place'), where: str(c.where, 80),
+            })).filter(c => c.text),
+            serves: servesOf(b.serves, state),
+            plants: plantsOf(b.plants, state),
+        };
+    }).filter(b => b?.goal).slice(0, CAPS.beats);
     if (!beats.length) return { ok: false, error: 'no usable beats' };
     beats = rotate(beats, arr(state?.meta?.beatLog));
     const sp = state?.spine;

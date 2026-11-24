@@ -6,7 +6,7 @@ import { rotate, validateArc, validateGenre, validatePlan, validateProfile } fro
 import { splitByCast, summaryView } from '../../core/record.js';
 import { detectAttempt } from '../../core/social.js';
 import { buildLorebook } from '../../core/lore.js';
-import { bandOf, ensureCast, initialState, logOp, reconcile, replay } from '../../core/state.js';
+import { bandOf, ensureCast, initialState, logOp, reconcile, replay, storyBasis } from '../../core/state.js';
 import { planPrompt } from '../../core/prompts.js';
 import { quoteMatches, stripDirector } from '../../core/text.js';
 import { validateObservation } from '../../core/validate.js';
@@ -210,13 +210,21 @@ test('passing an opening by once keeps the plan; walked past twice it is dropped
     const chat = [narr('The story opens at the gate of Houshan.'), user('x'), narr('Ji Si waits beneath the arch tonight.')];
     let mode = 'untouched';
     const { director, state } = makeHost(chat, {
-        script: (m, msgs) => ({ ...fakeObserver(replyOf(msgs)), direction: { beat: mode } }),
+        script: (m, msgs) => ({ ...fakeObserver(replyOf(msgs)), direction: { beat: mode, source: 'player', quote: 'I go my own way.' } }),
     });
     await director.kick();
     const plans = () => state.calls.filter(c => c.module === 'planner').length;
     const before = plans();
     mode = 'preempted';
-    const turn = async (text) => { chat.push(user('I go my own way.'), narr(text)); await director.kick(); };
+    const turn = async (text) => {
+        const offered = buildBrief(director.view()).offered;
+        chat.push(user('I go my own way.'));
+        director.sync();
+        const reply = narr(text);
+        reply.extra.narratorCue = { ...offered, basis: storyBasis(chat, NARRATOR) };
+        chat.push(reply);
+        await director.kick();
+    };
     await turn('The road north is empty and cold tonight.');
     assert.equal(plans(), before, 'one pass-by: the plan stands (live, 21 Nov 2026)');
     await turn('Snow lies on the road north tonight.');

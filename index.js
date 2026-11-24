@@ -4,13 +4,13 @@
 
 import { extension_prompt_roles, extension_prompt_types, showMoreMessages } from '../../../../script.js';
 import { group_generation_mode } from '../../../group-chats.js';
-import { buildBrief, buildStoryBlock } from './core/brief.js';
+import { buildBrief, buildStoryBlock, cueInPrompt } from './core/brief.js';
 import { DEFAULTS, Director } from './core/director.js';
 import { extractJson } from './core/json.js';
 import { DYNAMIC_WORLD, toWorldInfoEntry } from './core/lore.js';
 import { validateGenre } from './core/planner.js';
 import { openingPrompt, premisePrompt, revisePrompt } from './core/prompts.js';
-import { castPeople, classify } from './core/state.js';
+import { castPeople, classify, storyBasis } from './core/state.js';
 import { cleanDialogue, cleanSpokenLineGap, FALLBACK_NOTE, hasLeak, parseTags, stripDirector } from './core/text.js';
 import { clone, similarity, str } from './core/util.js';
 import { clearVars, publicVars, writeVars } from './core/vars.js';
@@ -75,6 +75,7 @@ let generating = false;
 let generatingSince = 0;
 let currentBrief = '';
 let lastBrief = { text: '', scan: '', lines: {}, fallback: true };
+let pendingCue = null;
 let lastStory = { text: '', overflow: false, tokens: 0 };
 let firstIncluded = 0;
 let loreKeys = [];
@@ -324,12 +325,24 @@ globalThis.narratorDirectorIntercept = async function (_coreChat, _contextSize, 
         lastBrief = buildBrief(state, { playerMessage, recentNarration, talkativeness, tokenCap: settings.briefTokens });
         lastStory = buildStoryBlock(state, { cast: injectedCast(state), firstIncluded, tokenCap: settings.storyTokens, memory: settings.memory, loreNames: loreKeys, unsummarised: settings.memory === 'extension' ? memoryGaps(settings) : null });
         setPrompts(lastBrief, lastStory);
+        const existing = genType === 'swipe' || genType === 'continue';
+        const index = c.chat.length - (existing ? 1 : 0);
+        const anchor = c.chat[index - 1];
+        const previousCue = genType === 'continue' ? entries[index]?.cue : null;
+        pendingCue = { epoch: director.epoch, index, anchor, basis: anchor ? storyBasis(c.chat, ref, anchor) : null, previousCue, brief: lastBrief };
         ui?.update('brief');
     } catch (e) {
         console.error('[Narrator Director] interceptor failed; narrating without notes', e);
         clearPrompts();
     }
 };
+
+function onPromptAssembled(data, dryRun) {
+    if (dryRun || !pendingCue || !director.owns(pendingCue.epoch)) return;
+    const prompt = data?.prompt ?? data?.input;
+    if (typeof prompt !== 'string' && !Array.isArray(prompt)) return;
+    pendingCue.sent = cueInPrompt(pendingCue.brief, prompt, value => ctx().substituteParams(value));
+}
 
 // ---------------------------------------------------------------- events
 
@@ -374,6 +387,7 @@ function onChatChanged() {
     loreEntries = [];
     loreSample = [];
     lastBrief = { text: '', scan: '', lines: {}, fallback: true };
+    pendingCue = null;
     lastStory = { text: '', overflow: false, tokens: 0 };
     clearPrompts();
     if (narratorRef()) {
@@ -386,6 +400,7 @@ function onChatChanged() {
 
 function onGenerationStarted(type, _opts, dryRun) {
     if (dryRun || !director.owns()) return;
+    pendingCue = null;
     genType = type || 'normal';
     if (!SKIP_TYPES.has(genType)) { generating = true; generatingSince = Date.now(); }
 }
@@ -417,7 +432,28 @@ function onMessageReceived(id) {
     const ref = narratorRef();
     if (!ref || !m || m.is_user) return;
     let text = hasLeak(m.mes) ? stripDirector(m.mes) : m.mes;
-    if (classify(m, ref) === 'narration') text = cleanDialogue(text);
+    if (classify(m, ref) === 'narration') {
+        text = cleanDialogue(text);
+        const pending = pendingCue;
+        if (pending?.sent && director.owns(pending.epoch) && Number(id) === pending.index && c.chat[id - 1] === pending.anchor) {
+            const current = pending.sent;
+            const previous = pending.previousCue;
+            const sent = !current.beat && previous ? previous : {
+                beat: current.beat,
+                clues: previous?.beat === current.beat ? [...new Set([...previous.clues, ...current.clues])] : current.clues,
+            };
+            const receipt = { beat: sent.beat, clues: sent.clues, basis: pending.basis };
+            (m.extra ??= {}).narratorCue = receipt;
+            // Streaming saves swipe metadata before this event; non-streaming copies extra after it.
+            const started = +new Date(m.gen_started);
+            for (const [i, info] of (m.swipe_info ?? []).entries()) {
+                if (info && (i === m.swipe_id || (started > 0 && +new Date(info.gen_started) === started))) {
+                    (info.extra ??= {}).narratorCue = receipt;
+                }
+            }
+            pendingCue = null;
+        }
+    }
     let dirty = text !== m.mes;
     if (dirty) {
         m.mes = text;
@@ -1019,6 +1055,7 @@ function registerCommand() {
     on(E.CHAT_CHANGED, onChatChanged);
     // A slash command in the composer can end the send before any generation takes place.
     on(E.GENERATION_AFTER_COMMANDS ?? E.GENERATION_STARTED, onGenerationStarted);
+    on(E.GENERATE_AFTER_DATA, onPromptAssembled);
     on(E.GENERATION_ENDED, onGenerationDone);
     on(E.GENERATION_STOPPED, onGenerationDone);
     on(E.MESSAGE_RECEIVED, onMessageReceived);
@@ -1041,7 +1078,11 @@ function registerCommand() {
             onChatChanged();
             return true;
         },
-        getBrief: () => ({ brief: lastBrief, story: lastStory, placement: placement(), preview: () => buildBrief(director.readView(), { tokenCap: settings.briefTokens }) }),
+        getBrief: () => ({
+            brief: lastBrief, story: lastStory, placement: placement(),
+            reply: director.readings().entries.findLast(entry => entry.kind === 'narration'),
+            preview: () => buildBrief(director.readView(), { tokenCap: settings.briefTokens }),
+        }),
         editState, editStates, confirmGenre, rerunGenre, retcon, setupGroup,
         playerOp: (op) => director.playerOp(op), showSource,
         command: (text) => directorCommand({}, text),

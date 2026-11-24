@@ -1,4 +1,4 @@
-Agnostic Narrator V2 release candidate 0.3.0-rc.2
+Agnostic Narrator V2 release candidate 0.3.0-rc.4
 For SillyTavern 1.19.0 or newer, Chat Completion.
 
 What is in this package

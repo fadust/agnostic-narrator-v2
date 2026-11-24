@@ -1,17 +1,49 @@
 // Round 5, W1 (beats as openings: goal and pressure) and W3 (the plan check).
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildBrief } from '../../core/brief.js';
+import { buildBrief, cueInPrompt } from '../../core/brief.js';
 import {
     checkPlan, copiedCriterion, fightsGenre, hollowChoice, nameClash, pastPrecondition, reviewPlan, scriptsPlayer, settlePlan, validatePlanRewrites,
 } from '../../core/plancheck.js';
 import { validatePlan } from '../../core/planner.js';
 import { observerPrompt, planCheckPrompt, planPrompt } from '../../core/prompts.js';
-import { ensureCast, initialState, logOp, reconcile, replay } from '../../core/state.js';
+import { applyOp, ensureCast, initialState, logOp, reconcile, replay } from '../../core/state.js';
 import { NARRATOR, defaultScript, makeHost, narr, user } from './helpers.mjs';
 
 const ctxOf = (over = {}) => ({ player: 'Max Brenner', criteria: [], names: ['Elsa', 'Piet', 'Max Brenner'], knownText: '', genre: { lethality: 'real', avoid: [] }, time: '', beatLog: [], ...over });
 const beat = (goal, pressure = goal, extra = {}) => ({ scene: 's1', goal, pressure, intent: goal, precondition: '', type: 'pressure', required: false, lore: [], clues: [], serves: '', ...extra });
+
+test('the scene takes only an eligible opening and keeps withheld beats available', () => {
+    const state = initialState({ player: 'Max' });
+    state.genre = { dominant: 'mystery' };
+    state.meta.beatLog = ['pressure'];
+    state.scene.location = { value: 'Seal Hall', established: true };
+    state.scene.present = ['Mira'];
+    const value = validatePlan({ beats: [
+        beat('A well mark is shown', 'A bucket waits at the well', { when: { place: 'Old Well' } }),
+        beat('The ledger office opens', 'The clerk is ready', { when: { people: ['Mira'], after: 1 } }),
+        beat('Mira offers a letter', 'Mira has a letter', { type: 'reveal', when: { people: ['Mira'] } }),
+    ] }, state).value;
+    applyOp(state, { kind: 'plan', value }, { mid: 'opening' }, []);
+    const [well, letter, ledger] = state.beats;
+    assert.equal(ledger.when.after, well.id, 'rotation keeps the prerequisite linked to its original draft slot');
+    assert.equal(buildBrief(state, { playerMessage: 'I ask Mira about the Old Well.' }).offered.beat, letter.id);
+    assert.equal(well.offered, undefined);
+    assert.equal(buildBrief({ ...state, scene: { ...state.scene, present: [] } }).offered.beat, null);
+    state.scene.location.value = 'The Old Well';
+    assert.equal(buildBrief(state).offered.beat, well.id);
+    well.status = 'complete';
+    letter.status = 'skipped';
+    assert.equal(buildBrief(state).offered.beat, ledger.id);
+});
+
+test('only the cue found in the assembled prompt is counted', () => {
+    const brief = { offered: { beat: 'letter', clues: ['seal'] }, lines: { scene_intent: 'Mira holds a letter', clue: 'a wax seal' } };
+    const cue = '<director_notes>\nscene_intent: Mira holds a letter\n</director_notes>';
+    assert.deepEqual(cueInPrompt(brief, [{ content: cue }, { content: 'clue: a wax seal' }]), { beat: 'letter', clues: [] });
+    assert.deepEqual(cueInPrompt(brief, 'scene_intent: Mira holds a letter'), { beat: null, clues: [] });
+    assert.deepEqual(cueInPrompt(brief, cue.replace('</director_notes>', 'clue: a wax seal\n</director_notes>')), brief.offered);
+});
 
 test('W1: a validated beat has goal and pressure; an old-shape answer (intent only) serves as both', () => {
     const st = initialState();

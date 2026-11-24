@@ -1,6 +1,5 @@
 // The director's pipeline. All SillyTavern access goes through `host`, so this runs unchanged in tests and fixtures.
 
-import { buildBrief } from './brief.js';
 import { extractJson } from './json.js';
 import { buildLorebook } from './lore.js';
 import { memoryMode, plannerMemory } from './memory.js';
@@ -125,6 +124,8 @@ function chatPrint(chat) {
     let out = `${chat.length}`;
     for (const m of chat) {
         const r = m?.extra?.narrator;
+        const cue = m.extra?.narratorCue;
+        if (cue) out += ':cue:' + JSON.stringify(cue);
         out += `|${m.narrator_id ?? ''}:${m.narrator_revision?.id ?? ''}:${m.is_user ? 'u' : ''}${m.is_system ? 'h' : ''}:${m.swipe_id ?? ''}:${rawTextHash(m)}`;
         out += `:${m.name ?? ''}:${m.original_avatar ?? ''}:${m.extra?.type ?? ''}:${r?.post ? 'p' : ''}:${arr(m.narrator_ops).length}.${arr(m.narrator_ops).at(-1)?.at ?? ''}`;
         if (r) out += `:${r.obs?.at ?? ''}.${r.obs?.hash ?? ''}.${r.track?.at ?? ''}.${arr(r.ops).length}.${arr(r.ops).at(-1)?.at ?? ''}.${r.err?.n ?? ''}.${r.trackErr?.n ?? ''}`;
@@ -585,9 +586,10 @@ export class Director {
         }
         const player = entry.player;
         const playerMessage = player?.mes ?? '';
-        const offered = buildBrief(before, { playerMessage, tokenCap: this.cfg().briefTokens }).offered;
+        const offered = entry.cue;
+        const beat = offered?.beat ? before.beats.find(b => b.id === offered.beat && b.status === 'queued') : null;
         const playerBasis = { mid: player?.narrator_id ?? null, revision: player ? activeRevision(player, this.host.narrator()) : null };
-        const messages = observerPrompt({ state: before, reply: entry.text, playerMessage, offered });
+        const messages = observerPrompt({ state: before, reply: entry.text, playerMessage, offered: beat ? offered : null });
         const rec = entry.m.extra.narrator;
         const stillCurrent = () => {
             const current = this.host.chat();
@@ -612,11 +614,12 @@ export class Director {
                 planned: queuedBeatText(before),
                 aliases: Object.fromEntries(Object.entries(before.cast).flatMap(([n, c]) => arr(c.aliases).map(a => [a, n]))),
                 uncertainIds: before.uncertain.map(u => u.id), threadIds: before.threads.map(t => t.id),
-                clueIds: offered.clues, player: before.meta.player, playerMessage,
+                clueIds: beat ? offered.clues : [], beatOffered: !!beat, beatGoalSource: beat?.goal_source,
+                player: before.meta.player, playerMessage,
                 known: [playerMessage, ...before.canon.map(f => f.fact), ...before.uncertain.map(f => f.fact)].join('\n'),
             });
             this.recovered('observer');
-            rec.obs = { hash: entry.hash, revision: entry.revision, player: playerBasis, delta: v.delta, accepted: v.accepted, rejected: slimRejected(v.rejected), beat: offered.beat, at: Date.now(), strip: [...(this.host.narrator()?.strip ?? [])] };
+            rec.obs = { hash: entry.hash, revision: entry.revision, player: playerBasis, delta: v.delta, accepted: v.accepted, rejected: slimRejected(v.rejected), beat: beat?.id ?? null, at: Date.now(), strip: [...(this.host.narrator()?.strip ?? [])] };
             delete rec.err;
             this.save();
             return true;

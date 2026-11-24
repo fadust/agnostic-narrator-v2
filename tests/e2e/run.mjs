@@ -232,6 +232,12 @@ await check('turn 2: one intent, never the queue; cast lines in words; lore keys
     const scan = await ev(() => window.narratorDirector.brief().scan);
     assert(scan.includes('Mira') && scan.includes('Greywell'), `scan text: ${scan}`);
     assert(!text.includes(scan), 'the scan-only block was sent');
+    const { receipt, observation } = await ev(() => {
+        const extra = SillyTavern.getContext().chat.at(-1).extra;
+        return { receipt: extra.narratorCue, observation: extra.narrator?.obs };
+    });
+    assert(receipt?.beat && receipt.clues.length === 1, 'the assembled cue did not reach the saved reply');
+    assert(observation?.beat === receipt.beat, 'the Observer did not use the recorded cue');
 });
 await check('/listvar-visible variables hold no beat, clue or belief', async () => {
     const vars = JSON.stringify(await ev(() => SillyTavern.getContext().chatMetadata.variables));
@@ -270,6 +276,11 @@ await check('swipe: the rejected swipe leaves nothing behind', async () => {
     assert(s.canon.length <= before + 2, 'canon grew by more than the new swipe');
     const prompt = flat(lastPrompt());
     assert(briefOf(lastPrompt()), 'no brief on swipe');
+    const cue = await ev(() => {
+        const message = SillyTavern.getContext().chat.at(-1);
+        return { active: message.extra.narratorCue, saved: message.swipe_info[message.swipe_id].extra.narratorCue };
+    });
+    assert(cue.active && JSON.stringify(cue.active) === JSON.stringify(cue.saved), 'cue did not follow the active swipe');
     void prompt;
 });
 

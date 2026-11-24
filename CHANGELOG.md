@@ -2,10 +2,15 @@
 
 Newest first. Each entry says which parts changed, so you know what to re-import.
 
-## Unreleased
+# 0.3.0-rc.4 (Agnostic Narrator V2)
+
+- The Director offers the first queued opening that fits the current place, cast and prerequisites. A held opening remains available for a later turn.
+- The Observer uses the cue recorded from the assembled prompt for that reply or swipe. The Inspector shows the opening sent and the evidence of its progress.
+- Beat completion needs a quote from the narrator for a world event or from the player for their own choice. Partial advances keep the beat open. Saved observations from earlier versions replay as recorded.
+- The Planner checker identifies whether the goal, the opening or both need an agency-preserving rewrite. Saving a usable plan clears the previous warning.
 
 - PG and Mature ask the narrator to blend the player's visible actions into the scene and convey the meaning of their speech through dialogue, narration, or the other characters' reactions. The Narrator card uses the story profile and scene cues to guide the telling.
-- The Director withholds conditional beats whose remaining place clues are elsewhere. The player stays in the scene while NPC spotlight and relationship lines apply to the supporting cast. Clues removed by the prompt budget are excluded from the clues reported as offered.
+- The player stays in the scene while NPC spotlight and relationship lines apply to the supporting cast. Clues removed by the prompt budget are excluded from the cues recorded for the Observer.
 - The extension and card remove blank inline code from dialogue and prose while keeping filled spans. Update the extension, card and both presets together.
 
 # 0.3.0-rc.3 (Agnostic Narrator V2)

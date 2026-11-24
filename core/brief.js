@@ -5,7 +5,7 @@ import { beatText } from './beat.js';
 import { castLine, comparisons, detectAttempt, detectExchange, pcLine } from './social.js';
 import { chapters } from './spine.js';
 import { wantOf } from './agenda.js';
-import { activeBeat, playerSettled } from './state.js';
+import { playerSettled } from './state.js';
 import { FALLBACK_NOTE } from './text.js';
 import { arr, nameKey, roughTokens } from './util.js';
 
@@ -22,6 +22,24 @@ function clueInScene(clue, location, playerMessage) {
     if (!isPlaceClue(clue) || !location) return true;
     const place = placeWords(clue.where).replace(/^the /, '');
     return [location, playerMessage].some(text => ` ${placeWords(text)} `.includes(` ${place} `));
+}
+
+function openingForScene(state, present, location, playerMessage) {
+    const here = placeWords(location).replace(/^the /, '');
+    const names = new Set(present.flatMap(name => [name, ...arr(state.cast[name]?.aliases)]).map(nameKey));
+    for (const beat of state.beats) {
+        if (beat.status !== 'queued') continue;
+        const when = beat.when;
+        if (when?.place && placeWords(when.place).replace(/^the /, '') !== here) continue;
+        if (arr(when?.people).some(name => !names.has(nameKey(name)))) continue;
+        if (when?.after && !state.beats.some(other => other.id === when.after && other.status === 'complete')) continue;
+        const clues = arr(beat.clues).filter(clue => !clue.found);
+        const clue = clues.find(clue => clueInScene(clue, location, playerMessage));
+        // Older plans can express a place restriction through their remaining clues.
+        if (beat.precondition && clues.length && clues.every(isPlaceClue) && !clue) continue;
+        return { beat, clue };
+    }
+    return {};
 }
 
 /** Who has had the least of the recent narration. Code only. */
@@ -101,12 +119,7 @@ export function buildBrief(state, opts = {}) {
     const spot = spotlight(state, recentNarration, talkativeness, playerMessage);
     if (spot) L.spotlight = `${spot} (little attention lately)`;
 
-    const queued = lagging ? null : activeBeat(state);
-    const clues = arr(queued?.clues).filter(clue => !clue.found);
-    const clue = clues.find(clue => clueInScene(clue, L.location, playerMessage));
-    // Defer conditional beats whose only remaining clues are at a different place.
-    const offScene = queued?.precondition && clues.length && clues.every(isPlaceClue) && !clue;
-    const beat = offScene ? null : queued;
+    const { beat, clue } = lagging ? {} : openingForScene(state, present, L.location, playerMessage);
     if (beat) {
         offered.beat = beat.id;
         // The opening the world offers (the beat's pressure), never its goal. Beats stored before W1 have only intent.
@@ -121,7 +134,7 @@ export function buildBrief(state, opts = {}) {
     }
     const pressure = pressureLine(state, beat);
     if (pressure) L.tension = pressure;
-    if (sc.initiative === 'world' && !lagging && !offScene) {
+    if (sc.initiative === 'world' && !lagging && (beat || !state.beats.some(b => b.status === 'queued'))) {
         const scene = state.scenes.find(s => s.id === beat?.scene) ?? state.scenes[0];
         const next = arr(scene?.if_unchallenged)[0];
         if (next) L.world_moves = next;
@@ -189,6 +202,18 @@ export function buildBrief(state, opts = {}) {
     if (L.clue) offered.clues.push(clue.id);
     const scan = [...present, sc.location.established ? sc.location.value : '', ...loreKeys].filter(Boolean).join('\n');
     return { text, scan, lines: L, fallback: false, lagging, offered };
+}
+
+/** Match the current note against the prompt assembled by SillyTavern, including macro placement. */
+export function cueInPrompt(brief, prompt, substitute = value => value) {
+    const text = Array.isArray(prompt)
+        ? prompt.map(m => typeof m.content === 'string' ? m.content : arr(m.content).map(p => p.text ?? '').join(' ')).join('\n')
+        : String(prompt ?? '');
+    const flat = value => value.replace(/\s+/g, ' ').trim();
+    const notes = [...text.matchAll(/<director_notes>([\s\S]*?)<\/director_notes>/g)].map(m => flat(m[1]));
+    const contains = (key) => notes.some(note => note.includes(flat(substitute(key + ': ' + brief.lines[key]))));
+    if (!brief.offered.beat || !contains('scene_intent')) return { beat: null, clues: [] };
+    return { beat: brief.offered.beat, clues: brief.lines.clue && contains('clue') ? brief.offered.clues : [] };
 }
 
 function render(L) {

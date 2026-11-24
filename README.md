@@ -85,7 +85,7 @@ On a 47-turn test chat the director made about 2.3 calls per turn, or 4 to 5 on 
 
 ## Status
 
-The current candidate is `0.3.0-rc.3`. It includes the quoted Director note cleanup, cast relationship history and updated dialogue instructions. See the [change catalog](CHANGELOG.md) and the [V2 verification record](docs/v2-verification.md).
+The current candidate is `0.3.0-rc.4`. The Director offers one opening that fits the scene, records which cue the narrator received, and uses quoted evidence to decide when a beat has landed. See the [change catalog](CHANGELOG.md) and the [V2 verification record](docs/v2-verification.md).
 
 ## Licence
 

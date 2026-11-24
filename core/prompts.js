@@ -57,10 +57,10 @@ Shape (all sections optional except summary):
   "threads": [{"op": "open | advance | resolve", "id": "advance and resolve only: a t- id from Open threads", "text": "", "quote": ""}],
   "lore": [{"keys": ["names that should recall this"], "text": "", "kind": "${list(LORE_KINDS)}", "supersedes": "a key of older lore this replaces, or null", "quote": ""}],
   "contradictions": [{"quote": "", "conflicts_with": "", "correction": ""}],
-  "direction": {"beat": "${list(BEAT_PROGRESS)}", "clues_found": ["ids"]}
+  "direction": {"beat": "${list(BEAT_PROGRESS)}", "source": "reply|player", "quote": "", "clues_found": ["ids"]}
 }
 
-"direction" is answered only from the Notes section: "complete" if the REPLY fully delivered the beat's goal (the scene intent where no goal is listed), "advanced" if it moved toward it, "preempted" if the player's action took the scene elsewhere, "untouched" otherwise. List a clue id only if the REPLY actually shows the player that clue.`;
+"direction" is answered only for a beat listed in Notes. "complete" requires the full goal to happen on the stated source: the REPLY proves what the world did, and the player's message proves what the player chose or did. NPCs offering or discussing a choice do not prove that the player took it. "advanced" requires a concrete step toward the goal in either source. "preempted" requires the player's own words or actions passing it by. For these three outcomes copy the decisive passage as "quote" and identify its "source" (reply or player). Otherwise use "untouched". List a clue id only if the REPLY actually shows the player that clue.`;
 
 // ---------------------------------------------------------------- spine tracker
 
@@ -162,6 +162,7 @@ export function observerPrompt({ state, reply, playerMessage, offered }) {
     const notes = beat ? [
         `scene intent: ${opening}${beat.precondition ? ` (only if: ${beat.precondition})` : ''}`,
         ...(goal && goal !== opening ? [`goal (judge "direction" by this; the narrator was not shown it): ${goal}`] : []),
+        beat.goal_source === 'player' ? 'Completion evidence must come from the player message.' : 'Completion evidence must come from the REPLY.',
         ...clues.map(c => `clue on offer (its id is for "clues_found" only): ${c}`),
     ] : [];
     const user = [
@@ -173,7 +174,7 @@ export function observerPrompt({ state, reply, playerMessage, offered }) {
         section('Open threads (the only ids "threads" may advance or resolve)', threads.length ? bullets(threads) : 'none: a thread can only be opened'),
         section('Things that did NOT happen (never record these)', state.tombstones.length ? bullets(state.tombstones.slice(-10).map(t => t.fact)) : ''),
         section('Notes the narrator was given (for "direction" only)', notes.length ? bullets(notes) : 'none'),
-        section('The player\'s message (context only, never a source of facts; a "settled" quote may come from it)', clipMiddle(playerMessage, 1500) || '(none)'),
+        section('The player\'s message (never a source of facts; use it for player choices in "direction" or a "settled" quote)', clipMiddle(playerMessage, 1500) || '(none)'),
         ...(arr(state.settled).length ? [section('Settled (already recorded)', bullets(state.settled.map(s => s.text)))] : []),
         `## REPLY\n${reply}`,
     ].join('\n');
@@ -323,6 +324,8 @@ Each beat has two texts, each at most two short sentences, under 220 characters:
 - State what is true in the world, never how to narrate: no tone, pacing or prose advice.
 - Never begin the goal or pressure with the player character or "you", and never say the player agrees, decides or accepts.
 - A beat may slip to a later scene. Say in the pressure how it reaches the player wherever they are: a messenger, a rumour, a person arriving.
+- Use "when.place" and "when.people" for a place or people that must already be in the scene. Use "when.after" only for a beat that truly needs an earlier beat to finish, giving its 1-based position in this list. Leave these blank for an opening that can reach the player anywhere. Keep textual conditions in "precondition".
+- Set "goal_source" to "player" when only the player's own decision or action can land the goal, otherwise use "reply" for an observable event in the narration. A player goal leaves the choice open.
 - Tie each beat to something already in play where you can: an open thread, a thing to plant, a spine criterion, or a character's want. Never copy a criterion's wording into the pressure.
 - A new name must be clearly different from every name already in the story.
 
@@ -491,7 +494,7 @@ ${JSON_ONLY}
 {
   "agendas": [{"who": "only a character with no wants yet, or whose wants the story has transformed; otherwise omit", "wants": ["one to three lasting wants, a few words each"], "why": "only when changing a character's wants: what happened"}],
   "scenes": [{"id": "s1", "purpose": "", "if_unchallenged": ["what happens next if nobody intervenes"], "choice_points": [""], "focus": {"Character name": "emotional target"}}],
-  "beats": [{"scene": "s1", "goal": "what counts as the beat landing", "pressure": "the opening the world offers now, and how it reaches the player", "precondition": "", "type": "${list(BEAT_TYPES)}", "required": false, "lore": [], "clues": [{"text": "", "route": "${list(CLUE_ROUTES)}", "where": ""}], "serves": "id of the open spine criterion this beat serves, or empty", "plants": "number of the payoff hook this beat plants, or empty"}],
+  "beats": [{"scene": "s1", "goal": "what counts as the beat landing", "pressure": "the opening the world offers now, and how it reaches the player", "precondition": "", "when": {"place": "", "people": [], "after": null}, "goal_source": "reply", "type": "${list(BEAT_TYPES)}", "required": false, "lore": [], "clues": [{"text": "", "route": "${list(CLUE_ROUTES)}", "where": ""}], "serves": "id of the open spine criterion this beat serves, or empty", "plants": "number of the payoff hook this beat plants, or empty"}],
   "act": "the current act number; raise it by one only at a real act boundary",
   "tension": "${list(ARC_TENSION)}",
   "outcomes": ["optional, at most two, and only when the story needs it: something that happened off-screen, away from the player, stated as who, what and the result, in words not numbers. Never something that involves the player character"],

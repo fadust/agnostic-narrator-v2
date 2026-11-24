@@ -5,7 +5,7 @@
 // Full disclosure: every setting has a control here, and everything the director holds is shown on some tab.
 
 import { failureHint, moduleLabel } from '../core/failures.js';
-import { beatText } from '../core/beat.js';
+import { beatConditions, beatText } from '../core/beat.js';
 import { AGE_GROUPS, ARC_TENSION, AXES, BANDS, BEAT_TYPES, CLUE_ROUTES, INITIATIVE, LETHALITY, SEVERITY, STAGES, STATS, STAT_BASELINE, TEMPERAMENTS, TEMPO } from '../core/enums.js';
 import { tellsFor } from '../core/social.js';
 import { splitByCast, summaryView } from '../core/record.js';
@@ -300,6 +300,10 @@ export function mountUi(api) {
     const tabs = {
         now(s) {
             const b = api.getBrief();
+            const cue = b.reply?.cue;
+            const reading = b.reply?.valid ? b.reply.rec.obs.delta?.direction : null;
+            const proof = reading?.proof;
+            const opening = cue?.beat ? s.beats.find(beat => beat.id === cue.beat) : null;
             const g = api.groupInfo();
             const total = s.meta.accepted + s.meta.rejected;
             return `
@@ -313,6 +317,7 @@ export function mountUi(api) {
                 <div class="nd-actions">${button('cmd', 'Re-plan', 'data-cmd="replan"')}${button('cmd', 'Draft an opening', 'data-cmd="opening"')}${button('cmd', 'Choose the next beat', 'data-cmd="suggest"')}${button('cmd', 'Retry failed calls', 'data-cmd="retry"')}</div>
 
                 <h4>Notes sent with the last turn</h4>${pre(b.brief.text || 'Nothing has been sent yet.')}
+                ${cue ? `<p>${cue.beat ? 'Opening sent · ' + h(opening?.pressure || cue.beat) : 'No opening sent.'}${proof ? ' · ' + h({ complete: 'Goal reached', advanced: 'Advanced', preempted: 'Passed by' }[reading.beat]) + ' · ' + h(proof.quote) : ''}</p>` : ''}
                 <h4>Notes if you sent a message now</h4>${pre(b.preview().text)}
                 <h4>Sent before the chat history</h4>
                 ${b.story.overflow ? '<p class="nd-warn">Story context was shortened to fit the token budget.</p>' : ''}
@@ -412,6 +417,15 @@ export function mountUi(api) {
             const queued = s.beats.filter(b => b.status === 'queued');
             const played = s.beats.filter(b => b.status !== 'queued');
             const sceneIds = ['', ...s.scenes.map(sc => sc.id)];
+            const afterOptions = b => {
+                const index = queued.indexOf(b);
+                const selected = b.when?.after || '';
+                const choices = new Map([['', 'None']]);
+                for (const other of played) if (other.status === 'complete') choices.set(other.id, other.goal);
+                for (const other of queued.slice(0, index < 0 ? queued.length : index)) choices.set(other.id, other.goal);
+                if (!choices.has(selected)) choices.set(selected, s.beats.find(other => other.id === selected)?.goal || 'Unavailable prerequisite');
+                return [...choices].map(([id, goal]) => `<option value="${h(id)}" ${id === selected ? 'selected' : ''}>${h(goal)}</option>`).join('');
+            };
             const clueLines = (b) => (b.clues ?? []).map(c => `${c.text} | ${c.route} | ${c.where ?? ''}${c.found ? ' | found' : ''}`).join('\n');
             const serveOptions = servable(s);
             const servesSelect = (b) => `<select class="text_pole" data-f="serves"><option value="">nothing in particular</option>${serveOptions.map(([id, label]) => `<option value="${h(id)}" ${id === b.serves ? 'selected' : ''}>${h(label)}</option>`).join('')}${b.serves && !serveOptions.some(([id]) => id === b.serves) ? `<option value="${h(b.serves)}" selected>${h(b.serves)} (no longer open)</option>` : ''}</select>`;
@@ -420,6 +434,10 @@ export function mountUi(api) {
                     ${field('Opening', wrapped('pressure', beatText(b).pressure, 'what the world offers now; the player may take it or pass it by'), 'What the narrator sees. True in the world now; never the outcome.')}
                     ${field('Lands when', wrapped('goal', beatText(b).goal, 'what counts as this beat happening'), 'The record keeper judges the beat by it.')}
                     ${field('Only if', wrapped('precondition', b.precondition, 'the condition that makes it fit'))}
+                    ${field('Place required', text('place', b.when?.place ?? '', 'any location'))}
+                    ${field('People required', text('people', (b.when?.people ?? []).join(', '), 'comma-separated names'))}
+                    ${field('After beat', `<select class="text_pole" data-f="after">${afterOptions(b)}</select>`)}
+                    ${field('Goal evidence', `<select class="text_pole" data-f="goal_source"><option value="reply">Narrator reply</option><option value="player" ${b.goal_source === 'player' ? 'selected' : ''}>Player message</option></select>`)}
                     <div class="nd-field"><span>Kind</span><div class="nd-inline">${select('type', b.type ?? 'choice', BEAT_TYPES)} ${check('required', b.required, 'Required')} ${button('remove-beat', 'Remove')}</div></div>
                     ${field('In scene', select('scene', b.scene ?? '', sceneIds))}
                     ${field('Serves', servesSelect(b), 'The spine criterion this beat gives the player a way toward.')}
@@ -852,6 +870,8 @@ export function mountUi(api) {
                     ...(prev ?? {}), id, scene: f.scene, lore: fromCommas(f.lore).slice(0, 3), clues, serves: f.serves || '',
                     // intent is the goal's old name, kept as a copy. Either text alone serves as both.
                     ...beatText(f), precondition: f.precondition.trim(), type: f.type, required: !!f.required, status: 'queued',
+                    when: beatConditions({ place: f.place, people: fromCommas(f.people), after: f.after }),
+                    goal_source: f.goal_source === 'player' ? 'player' : 'reply',
                 };
             }).filter(b => b.goal);
             api.editState('beats', [...s.beats.filter(b => b.status !== 'queued'), ...queued]);

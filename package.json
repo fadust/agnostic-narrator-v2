@@ -1,6 +1,6 @@
 {
   "name": "agnostic-narrator",
-  "version": "0.3.0-rc.3",
+  "version": "0.3.0-rc.4",
   "private": true,
   "type": "module",
   "description": "Genre-agnostic SillyTavern narrator: one narrator card plus a director extension.",

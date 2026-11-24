@@ -110,7 +110,7 @@ export function validateObservation(raw, ctx) {
 
     const delta = {
         summary: '', scene: {}, facts: [], confirmed: [], beliefs: [], settled: [], relationships: [], stats: [], statuses: [],
-        cast_changes: [], prior_relationships: [], threads: [], lore: [], contradictions: [], direction: { beat: 'untouched', clues_found: [] },
+        cast_changes: [], prior_relationships: [], threads: [], lore: [], contradictions: [], direction: { beat: 'untouched', clues_found: [], proof: null },
     };
     if (!isObj(raw)) {
         reject('output', 'not an object', raw);
@@ -356,7 +356,18 @@ export function validateObservation(raw, ctx) {
     });
 
     if (isObj(raw.direction)) {
-        if (BEAT_PROGRESS.includes(raw.direction.beat)) delta.direction.beat = raw.direction.beat;
+        const { beat, source } = raw.direction;
+        if (ctx.beatOffered && BEAT_PROGRESS.includes(beat) && beat !== 'untouched') {
+            const required = beat === 'preempted' ? 'player' : beat === 'complete' ? (ctx.beatGoalSource ?? 'reply') : null;
+            const passage = str(raw.direction.quote, 350);
+            const original = source === 'player' ? normalise(ctx.playerMessage) : source === 'reply' ? hay : '';
+            const proof = normalise(passage);
+            if ((!required || source === required) && proof
+                && (proof === original || (proof.length >= 5 && (' ' + original + ' ').includes(' ' + proof + ' ')))) {
+                delta.direction.beat = beat;
+                delta.direction.proof = { source, quote: passage };
+            } else reject('direction', 'beat progress needs a quote from ' + (required ?? 'the reply or player message'), raw.direction);
+        }
         for (const id of arr(raw.direction.clues_found)) {
             if (arr(ctx.clueIds).includes(id)) delta.direction.clues_found.push(id);
             else reject('direction', 'clue was not on offer', id);

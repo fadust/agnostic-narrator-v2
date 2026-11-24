@@ -55,6 +55,7 @@ export function prepare(fx) {
                 const v = validateObservation(raw, {
                     text: input.reply, names: [...Object.keys(state.cast)], tombstones: state.tombstones, present: state.scene.present,
                     uncertainIds: [], threadIds: [], clueIds: offered.clues, player: state.meta.player,
+                    playerMessage: input.playerMessage, beatOffered: !!offered.beat,
                 });
                 return { ok: true, value: v.delta, rejected: v.rejected };
             },

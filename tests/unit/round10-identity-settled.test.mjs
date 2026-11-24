@@ -85,7 +85,7 @@ test('settled ids stay unique at the cap, and a 2-letter player quote does not c
     assert.equal(v.delta.settled?.length ?? 0, 0);
 });
 
-test('a beat finished by three advanced replies plants its hook', () => {
+test('three saved legacy advances replay the hook they already planted', () => {
     const s = initialState({ player: 'Max' });
     s.genre = { dominant: 'drama' };
     s.arc = { goal: 'g', act: 1, payoff: { name: 'p', hooks: [{ text: 'a seal', planted: false }] }, endings: [] };
@@ -94,5 +94,30 @@ test('a beat finished by three advanced replies plants its hook', () => {
     const id = s.beats[0].id;
     for (const i of [2, 3, 4]) applyDelta(s, { delta: { summary: 'x', direction: { beat: 'advanced', clues_found: [] } }, beat: id, accepted: 0, rejected: [] }, { mid: `bbb2222${i}`, i });
     assert.equal(s.beats[0].status, 'complete');
+    assert.equal(s.arc.payoff.hooks[0].planted, true);
+});
+
+test('a player goal needs the player’s evidence, and partial advances never plant its hook', () => {
+    const s = initialState({ player: 'Max' });
+    s.genre = { dominant: 'drama' };
+    s.arc = { goal: 'g', act: 1, payoff: { name: 'p', hooks: [{ text: 'a seal', planted: false }] }, endings: [] };
+    const plan = validatePlan({ beats: [{ goal: 'accept the granary job', pressure: 'Mira has a job on offer', goal_source: 'player', plants: 1 }] }, s);
+    applyOp(s, { kind: 'plan', by: 'director', value: plan.value }, at('aaa11111'), []);
+    const beat = s.beats[0];
+    const text = 'Mira explains the terms and says Max has accepted.';
+    const apply = (direction, playerMessage, i) => {
+        const result = validateObservation({ direction }, { text, names: ['Max', 'Mira'], beatOffered: true, beatGoalSource: beat.goal_source, playerMessage });
+        applyDelta(s, { ...result, beat: beat.id }, { mid: `reply-${i}`, i, text });
+        return result.delta.direction;
+    };
+    assert.equal(apply({ beat: 'complete', source: 'reply', quote: text }, 'Tell me more.', 1).beat, 'untouched');
+    assert.equal(apply({ beat: 'advanced', source: 'player', quote: 'I accept.' }, 'Tell me more.', 2).proof, null);
+    for (let i = 3; i < 6; i++) apply({ beat: 'advanced', source: 'reply', quote: 'Mira explains the terms' }, 'Tell me more.', i);
+    assert.equal(beat.progress, 3);
+    assert.equal(beat.status, 'queued');
+    assert.equal(s.arc.payoff.hooks[0].planted, false);
+    const proof = apply({ beat: 'complete', source: 'player', quote: 'I accept the granary job.' }, 'I accept the granary job.', 6);
+    assert.deepEqual(proof.proof, { source: 'player', quote: 'I accept the granary job.' });
+    assert.equal(beat.status, 'complete');
     assert.equal(s.arc.payoff.hooks[0].planted, true);
 });

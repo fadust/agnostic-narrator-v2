@@ -5,18 +5,26 @@ import { test } from 'node:test';
 import { buildBrief } from '../../core/brief.js';
 import { DEFAULTS } from '../../core/director.js';
 import { planTrigger } from '../../core/planner.js';
-import { initialState } from '../../core/state.js';
-import { fakeObserver, makeHost, narr, replyOf, user } from './helpers.mjs';
+import { initialState, storyBasis } from '../../core/state.js';
+import { NARRATOR, fakeObserver, makeHost, narr, replyOf, user } from './helpers.mjs';
 
 function playing(mode, extra = {}) {
     const chat = [narr('The story opens at the gate of Houshan.'), user('x'), narr('Ji Si waits beneath the arch tonight.')];
     let dir = mode;
     const host = makeHost(chat, {
         settings: { nudgeAfter: 3, stallAfter: 0, ...extra },
-        script: (m, msgs) => ({ ...fakeObserver(replyOf(msgs)), facts: [], threads: [], direction: { beat: dir } }),
+        script: (m, msgs) => ({ ...fakeObserver(replyOf(msgs)), facts: [], threads: [], direction: { beat: dir, source: 'reply', quote: replyOf(msgs) } }),
     });
     const turn = async (n = 1) => {
-        for (let k = 0; k < n; k++) { chat.push(user('I wait.'), narr(`Rain on the arch, beat ${chat.length}.`)); await host.director.kick(); }
+        for (let k = 0; k < n; k++) {
+            const offered = buildBrief(host.director.view()).offered;
+            const reply = narr(`Rain on the arch, beat ${chat.length}.`);
+            chat.push(user('I wait.'));
+            host.director.sync();
+            reply.extra.narratorCue = { ...offered, basis: storyBasis(chat, NARRATOR) };
+            chat.push(reply);
+            await host.director.kick();
+        }
     };
     return { ...host, chat, turn, set: (d) => { dir = d; } };
 }
