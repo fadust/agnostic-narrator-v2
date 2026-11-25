@@ -625,7 +625,8 @@ export class Director {
                 const text = proof.source === 'player' ? playerMessage : entry.text;
                 const prompt = beatCheckPrompt({
                     goal: beatText(beat).goal, outcome: direction.beat, player: before.meta.player,
-                    proof, context: aroundQuote(text, proof.quote),
+                    // Dialogue can refer back across several paragraphs. Keep more lead-in than aftermath.
+                    proof, context: aroundQuote(text, proof.quote, 1200, 200),
                 });
                 const verdict = (await this.checkEvidence('observer-check', prompt, ['beat'])).beat;
                 if (!this.owns(epoch)) return false;
@@ -799,7 +800,7 @@ export class Director {
     async checkEvidence(module, prompt, ids) {
         const epoch = this.epoch;
         try {
-            return await this.json(module, prompt, raw => validateEvidenceCheck(raw, ids));
+            return await this.json(module, prompt, raw => validateEvidenceCheck(raw, ids, module === 'observer-check'));
         } catch (e) {
             if (!this.owns(epoch) || String(e?.message) === 'superseded' || e?.name === 'AbortError') throw e;
             this.fail(module, e);

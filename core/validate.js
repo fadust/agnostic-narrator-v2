@@ -540,7 +540,7 @@ export function validateTracking(raw, ctx) {
 }
 
 /** The text around a quote in its source, for the evidence checker. */
-export function aroundQuote(text, quote, pad = 200) {
+export function aroundQuote(text, quote, before = 200, after = before) {
     const hay = String(text ?? '');
     const q = String(quote ?? '').trim();
     let at = q ? hay.toLowerCase().indexOf(q.toLowerCase()) : -1;
@@ -550,11 +550,11 @@ export function aroundQuote(text, quote, pad = 200) {
         at = own ? hay.indexOf(own) : -1;
     }
     if (at === -1) return q;
-    return hay.slice(Math.max(0, at - pad), at + q.length + pad).replace(/\s+/g, ' ').trim();
+    return hay.slice(Math.max(0, at - before), at + q.length + after).replace(/\s+/g, ' ').trim();
 }
 
 /** Accept a single verdict per known claim. Repeated or missing verdicts confer no confirmation. */
-export function validateEvidenceCheck(raw, ids) {
+export function validateEvidenceCheck(raw, ids, checkBeat = false) {
     if (!isObj(raw) || !Array.isArray(raw.verdicts)) return { ok: false, error: 'no verdicts' };
     const known = new Set(arr(ids));
     const seen = new Set();
@@ -566,8 +566,19 @@ export function validateEvidenceCheck(raw, ids) {
             continue;
         }
         seen.add(v.id);
-        if (v.verdict === 'confirm') out[v.id] = { verdict: 'confirm' };
-        else if (v.verdict === 'reject' && str(v.reason, 200)) out[v.id] = { verdict: 'reject', reason: str(v.reason, 200) };
+        const reason = str(v.reason, 200);
+        if (checkBeat && !str(v.observed, 240)) continue;
+        if (checkBeat && v.verdict === 'confirm') {
+            if (!reason || typeof v.target?.required !== 'string' || typeof v.target?.actual !== 'string') continue;
+            const required = str(v.target.required, 100);
+            const actual = str(v.target.actual, 100);
+            if (required && nameKey(required) !== nameKey(actual)) {
+                out[v.id] = { verdict: 'reject', reason: `The goal names ${required}, but the quote establishes ${actual || 'no identified recipient'}.` };
+                continue;
+            }
+        }
+        if (v.verdict === 'confirm') out[v.id] = { verdict: 'confirm', ...(reason ? { reason } : {}) };
+        else if (v.verdict === 'reject' && reason) out[v.id] = { verdict: 'reject', reason };
     }
     return { ok: true, value: out };
 }

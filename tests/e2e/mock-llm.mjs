@@ -54,7 +54,7 @@ export function startMock(port = 8124) {
             return { kind: 'observer', text: '```json\n' + JSON.stringify(out) + '\n```' };
         }
         if (sys.includes('You check a proposed beat outcome')) {
-            return { kind: 'observer-check', text: JSON.stringify({ verdicts: [{ id: 'beat', verdict: 'reject', reason: 'handling the bucket does not show its taste' }] }) };
+            return { kind: 'observer-check', text: JSON.stringify({ verdicts: [{ id: 'beat', verdict: 'reject', observed: 'Mira hands over a bucket.', reason: 'handling the bucket does not show its taste' }] }) };
         }
         // Modules added after 0.1.0: spine, its check, the tracker and its check, plan check, fact clean-up, conclusions.
         if (sys.includes('You draft the spine of an interactive story')) {

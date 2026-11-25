@@ -120,10 +120,14 @@ test('a criterion cannot advance with two conflicting verdicts for its quote', (
 
 test('the Observer only completes a beat when its quote proves the exact goal', async () => {
     const goal = 'Haruka says goodbye to Dachi before he leaves.';
-    for (const [quote, verdicts, expected] of [
-        ['Haruka tells Max to stand up.', [{ id: 'beat', verdict: 'reject', reason: 'Haruka addresses Max' }], 'untouched'],
+    const addressee = 'Dachi has left. Haruka turns to Max, who is still kneeling.';
+    const description = 'The wind rattles the latch. '.repeat(16);
+    for (const [quote, verdicts, expected, leadIn = ''] of [
+        ['Stand up, honey. Please.', [{ id: 'beat', verdict: 'reject', observed: 'Haruka asks Max to stand', reason: 'Haruka addresses Max' }], 'untouched', `${addressee}\n\n${description}`],
         ['Haruka tells Max to stand up.', [], 'untouched'],
-        ['Haruka bids Dachi goodbye at the door.', [{ id: 'beat', verdict: 'confirm' }], 'complete'],
+        ['Haruka tells Max to stand up.', [{ id: 'beat', verdict: 'confirm' }], 'untouched'],
+        ['Haruka tells Max to stand up.', [{ id: 'beat', verdict: 'confirm', observed: 'Haruka speaks to Max', target: { required: 'Dachi', actual: 'Max' }, reason: 'She speaks a final line' }], 'untouched'],
+        ['Haruka bids Dachi goodbye at the door.', [{ id: 'beat', verdict: 'confirm', observed: 'Haruka bids Dachi goodbye', target: { required: 'Dachi', actual: 'Dachi' }, reason: 'She says goodbye to Dachi at the door' }], 'complete'],
     ]) {
         const chat = [user('I watch from the hall.')];
         logOp(chat[0], { by: 'player', kind: 'plan', value: { beats: [{ goal, pressure: 'Dachi reaches for the latch.', type: 'choice' }] } });
@@ -132,18 +136,26 @@ test('the Observer only completes a beat when its quote proves the exact goal', 
         });
         director.sync();
         const [beat] = director.view().beats;
-        const reply = narr(quote);
+        const reply = narr(leadIn + quote);
         reply.extra.narratorCue = { beat: beat.id, clues: [], basis: storyBasis(chat, NARRATOR) };
         chat.push(reply);
         const call = host.call;
+        let evidencePrompt;
         host.call = async (module, messages, ...rest) => {
             if (module !== 'observer-check') return call(module, messages, ...rest);
-            assert.ok(messages[1].content.includes(goal));
-            assert.ok(messages[1].content.includes(quote));
+            evidencePrompt = messages;
             return JSON.stringify({ verdicts });
         };
         director.sync();
         assert.equal(await director.observe(director.readings().entries.at(-1)), true);
+        assert.ok(evidencePrompt[1].content.includes(goal));
+        assert.ok(evidencePrompt[1].content.includes(quote));
+        if (leadIn) {
+            assert.match(evidencePrompt[0].content, /Do not assign an identity from the goal/);
+            const sourceIndex = evidencePrompt[1].content.indexOf(addressee);
+            assert.ok(sourceIndex >= 0, 'the addressee is established in earlier context');
+            assert.ok(sourceIndex < evidencePrompt[1].content.indexOf(goal));
+        }
         assert.equal(reply.extra.narrator.obs.delta.direction.beat, expected);
         assert.equal(reply.extra.narrator.obs.delta.summary, 'Haruka speaks.');
         assert.equal(director.view().beats[0].status, expected === 'complete' ? 'complete' : 'queued');
