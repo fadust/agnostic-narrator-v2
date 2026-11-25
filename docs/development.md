@@ -13,7 +13,7 @@ card/               sources for everything in dist/
   src/preset.md         the companion preset's main prompt
   src/preset.base.json  preset settings other than the main prompt
   build.mjs             builds dist/; holds craft entries and greetings
-dist/               built, importable files (committed)
+dist/               built, importable JSON files and installation notes (committed)
 fixtures/           cases for testing director models
 tools/fixtures.mjs  fixture runner
 tools/rules.mjs     writes docs/rules.md from source
@@ -49,7 +49,7 @@ ST_DIR=/path/to/SillyTavern npm run e2e
 | `npm run docs` | Rebuilds `docs/rules.md` only | Node |
 | `npm run e2e` | Starts SillyTavern on a throwaway data folder with a mock LLM and runs the end-to-end checks | A SillyTavern checkout with `npm install` done, and Playwright with Chromium |
 
-The end-to-end run copies the extension's files (`index.js`, `manifest.json`, `style.css`, `core/`, `st/`) into the SillyTavern checkout, takes about four minutes, and removes its data folder afterwards. Set `SHOTS_DIR` to save screenshots, and `VERBOSE=1` for the browser console.
+The end-to-end run copies SillyTavern and the extension's runtime files (`index.js`, `manifest.json`, `style.css`, `core/`, `st/`) into a disposable fixture. It takes a few minutes and removes the fixture afterward. `ND_PACKAGE_DIR` can point to an extracted installer with `narrator-director/` and the import files. Set `SHOTS_DIR` to save screenshots and `VERBOSE=1` for the browser console. [Current release verification](v2-verification.md)
 
 ## Changing a rule
 

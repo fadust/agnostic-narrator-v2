@@ -28,6 +28,8 @@ All commands begin with `/director`. Anything that is not a keyword is a free-te
 | `/director retry` | Retry failed director calls and clear their pause |
 | `/director dump` | Return the full state as JSON |
 
+## Memory providers
+
 For external memory, set **Who keeps the story’s memory** to **Another extension**. Use **Read the memory from** to select BaiBai Book, Summarize, a macro, or another registered provider. The command reports the source it used. If the provider is unavailable, the check uses the current scene, established facts and recent summaries.
 
 An extension can register its connector through `window.narratorDirector.registerMemoryProvider` with an `id`, a `name` and a `story({ before })` function. Full-story reads omit `before`. To supply historical context to the Observer and spine tracker, set `supportsBefore: true` and return `{ text, source, before }` with the same exclusive chat index. The text should contain only events before that index.
@@ -54,7 +56,7 @@ Under **Extensions → Narrator Director**.
 | Let a thread sleep after N turns | 12 | An open thread untouched this long leaves the planner's view until a reply names its people, place or key words again, or they are in the scene. It stays on the Record tab. 0 means threads never sleep |
 | Re-plan when nothing changes for N replies | 5 | Replies that record no fact, thread, person, place, clue or opening taken. The planner then brings one small opening to where you are. A recent direction asking for quiet holds it back. 0 turns it off |
 | Who keeps the story's memory | The director | The director: it sends summaries and chapters. Another extension: that extension feeds the narrator the story so far; the director adds its summaries of those of the last 2 turns that extension has not summarised yet, and plans from that extension's record. Nobody: no memory is sent |
-| Read the memory from | Automatic | With "Another extension": BaiBai Book, Summarize, or a macro. Automatic takes the first present |
+| Read the memory from | Automatic | With "Another extension", choose BaiBai Book, Summarize, a registered provider or a macro. Automatic takes the first available provider |
 | Macro to read | (empty) | With "A macro": its name without braces |
 | Tags to remove before reading | `bbs_start, bbs_end, bbs_items, bbs_vars, bbi_image` | Other extensions' tags, removed whole before the director reads a reply. The message is not changed |
 | Roll up summaries every N | 8 | Counted over summaries whose messages have left the prompt. Only when the director keeps the memory |

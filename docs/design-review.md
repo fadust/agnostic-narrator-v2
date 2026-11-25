@@ -1,5 +1,7 @@
 # Design review
 
+This review describes the first implementation and its position against the original build plan. For current release, test and audit findings, see [V2 verification](v2-verification.md).
+
 How the build departs from the original plan, and why. The plan is in [`design-and-build-plan.md`](design-and-build-plan.md); it was reviewed against SillyTavern 1.19.0 source (`release`, `06bde93`), then built and run against it. For how the system works now, read [How it works](how-it-works.md). The "Extension requirements" tab it refers to was not part of what I was given, so requirement IDs (MSG-01, DIR-08 and so on) are not traced here; I worked from the design text.
 
 The nine principles held up and are all implemented. The changes below are in how they are met.

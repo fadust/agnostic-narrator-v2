@@ -19,9 +19,7 @@ Needs SillyTavern 1.19.0 or later. The card uses the macro engine for genre guid
 
 ## Quick start
 
-1. Install the extension in one of two ways:
-   - **Lean:** open the V2 release ZIP and put its `narrator-director` folder in `SillyTavern/public/scripts/extensions/third-party/`.
-   - **From the repository:** in **Extensions → Install extension**, paste `https://github.com/fadust/agnostic-narrator-v2` to install the currently published source.
+1. Download the rc.6 installer ZIP and copy its `narrator-director` folder into `SillyTavern/public/scripts/extensions/third-party/`. You can also install from the repository through **Extensions → Install extension**. [Installer ZIP](https://github.com/fadust/agnostic-narrator-v2/releases/download/v0.3.0-rc.6/agnostic-narrator-v2-0.3.0-rc.6.zip) · [Installation](docs/installation.md#1-install-the-extension)
 2. Import `Narrator.card.json` as a character, and allow its regex scripts when asked.
 3. Import both [companion presets](#presets-and-genres). Choose one in **AI Response Configuration**.
 4. Optional: import `Narrator Director.quickreplies.json` for buttons.
@@ -50,6 +48,7 @@ A few commands you will use most (all of them: [docs/reference.md](docs/referenc
 | `/director <words>` | A direction for the story, for example `/director a storm is coming` |
 | `/director settle <text>` | Close a matter for good: no one presses it again |
 | `/director redraft` | A fresh arc and spine from where the story stands |
+| `/director checkplan` | Check and correct the existing queue using current continuity and the selected memory source |
 | `/director retcon: <text>` | Undo a fact. Use `!` to confirm a broad match |
 | `/director retry` | Try failed director calls again now |
 
@@ -70,7 +69,7 @@ On a 47-turn test chat the director made about 2.3 calls per turn, or 4 to 5 on 
 | [Troubleshooting](docs/troubleshooting.md) | Symptoms, causes and fixes |
 | [Development](docs/development.md) | Layout, tests, the fixture suite, changing rules |
 | [Integration notes](docs/integration-notes.md) | Working alongside other extensions: findings, and what is planned |
-| [Audits](docs/package-audit-2026-11-22.md) | The latest whole-package audit and what was fixed |
+| [Verification and audit status](docs/v2-verification.md) | Current rc.6 results, findings that still apply, and links to historical audits |
 | [Changelog](CHANGELOG.md) | What changed, newest first |
 
 ## What is in the box
@@ -85,7 +84,7 @@ On a 47-turn test chat the director made about 2.3 calls per turn, or 4 to 5 on 
 
 ## Status
 
-The current candidate is `0.3.0-rc.6`. The Director can check queued beats with `/director checkplan` and verify facts and criteria against earlier evidence from BaiBai Book or another provider with historical reads. See the [change catalog](CHANGELOG.md) and the [V2 verification record](docs/v2-verification.md).
+The current candidate is `0.3.0-rc.6`. The GitHub prerelease has a dedicated installer ZIP with the extension and import files. The Director can check queued beats with `/director checkplan` and verify facts and criteria against earlier evidence from BaiBai Book or another provider with historical reads. [GitHub prerelease](https://github.com/fadust/agnostic-narrator-v2/releases/tag/v0.3.0-rc.6) · [Changelog](CHANGELOG.md) · [Verification](docs/v2-verification.md)
 
 ## Licence
 

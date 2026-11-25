@@ -1,7 +1,13 @@
 Agnostic Narrator V2 release candidate 0.3.0-rc.6
 For SillyTavern 1.19.0 or newer, Chat Completion.
 
-What is in this package
+From the rc.6 GitHub source archive
+  Create SillyTavern\public\scripts\extensions\third-party\narrator-director\.
+  Copy manifest.json, index.js, style.css, core/, st/ and LICENSE from the extracted
+  repository root into that folder. Import Narrator.card.json, the presets and the
+  optional Quick Replies from dist/. The rc.6 prerelease also has a dedicated installer ZIP.
+
+Files in a dedicated installer ZIP when one is provided
   narrator-director/                 the extension
   Narrator.png                       the Narrator companion card (picture with the card inside)
   Narrator.card.json                 the same card as JSON, if you prefer importing that
@@ -9,7 +15,7 @@ What is in this package
   Narrator Companion (Mature).preset.json   the preset allowing NSFW and NSFL material where it fits the story
   Narrator Director.quickreplies.json  optional quick-reply buttons for the director's commands
 
-Install
+Install from a dedicated installer ZIP
   1. Close SillyTavern.
   2. Copy the folder narrator-director into
        SillyTavern\public\scripts\extensions\third-party\

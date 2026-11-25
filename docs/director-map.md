@@ -1,7 +1,6 @@
 # Director map and audit (22 Nov 2026, after 0.2.0 and the replay cache)
 
-This page shows how Narrator Director is put together and what is still open. It covers 7.3k lines in 21 modules, with 211 tests passing.
-For the history behind it, see `docs/audit-2026-11-21.md` and `CHANGELOG.md`.
+This page records the November 22 architecture and audit snapshot. The line counts and original outcomes below refer to that snapshot. See [current verification and audit status](v2-verification.md) for rc.6.
 
 ## 1. The big picture
 
@@ -104,14 +103,14 @@ Each turn costs about 2.3 director calls on average (measured on the 47-turn tes
 - **The card** (`card/src/description.md`) sets the Narrator's role. The **preset** (`card/src/preset.md`) owns the reply length guidance. Its defaults are about 500 tokens, with room for up to about 1,000 when the scene needs more detail.
 - **`<story_context>`** (`buildStoryBlock`): premise, story profile, and summaries or chapters by memory mode.
 - **`<director_notes>`** (`buildBrief`, capped at 300 tokens): scene, scene intent, clue, tension, spotlight, cast lines with wants, the player character's line, attempt, watch, settled, status.
-- **Post-history line** (from the card, after the chat): length, "a long player message does not need a longer reply", vary the opening.
+- **Post-history line:** the rc.6 card preserves the active preset’s post-history prompt. The companion preset carries the writing and length guidance.
 - **Genre craft entries:** lorebook entries switched on by flags.
 
-## 5. Audit: still open
+## 5. Historical audit findings
 
-A1-A10 fixed 22 Nov 2026 (see CHANGELOG), except: A8 split only the model call out of index.js (commands and setup steps stay where they are); A10 did not re-run the end-to-end checks (they need Playwright). A2 has no automated test: it needs a swipe in the middle of a profile call.
+The original A1–A10 findings are recorded below. See [current runtime audit status](v2-verification.md#2122-november-runtime-audits-against-rc6) for the source guards, split command grammar, and later browser coverage.
 
-Ranked by impact. All are in shipped code (HEAD 9561991).
+The original ranking is from commit `9561991`.
 
 | # | Area | Finding | Impact | Suggested fix |
 |---|---|---|---|---|

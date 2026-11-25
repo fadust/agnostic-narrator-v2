@@ -71,6 +71,7 @@ Both presets use the story's existing genre mix, stakes and lethality. Content s
 | Give a direction | `/director make the next scene quieter` |
 | Change the scene | `/director scene: location=the docks; mood=tense; present=Ji Si, Hale` |
 | Queue what comes next | `/director beats: a rival appears; the storm breaks` |
+| Recheck the current queue against the scene and selected story memory | `/director checkplan` |
 | Redo the last reply | `/director rewrite: less dialogue` |
 | Undo something that happened | `/director retcon: the letter was burned` |
 | Choose the next beat yourself | `/director suggest` (shows the plan) |

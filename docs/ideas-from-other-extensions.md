@@ -1,5 +1,7 @@
 # Ideas from other extensions
 
+This is the November research record. Check [rc.6 verification](v2-verification.md) for the current behavior and remaining audit findings.
+
 Written 18 November 2026. Nine SillyTavern extensions were read, README, docs and code, by three research agents: storybooster, Story_director, Story_block, 100log, StoryArc, Story-Engine, zTracker, Extension-Blackboard and merged_world_tracker. Nothing here is built. It is a menu for the owner to choose from. Shallow clones were kept in the session scratchpad for reference only.
 
 ## What we already do better
@@ -92,9 +94,9 @@ StoryArc's design notes record a real failure. When the narrator was shown what 
 4. **D1 and D3.** Characters with their own purpose and a moving world: the largest change, worth doing once the tracker is trusted.
 5. **Theme F.** As needed, when cost or prompt size starts to matter.
 
-## Reassessment against D:\Sillytavern B (18 November 2026, later, corrected)
+## Reassessment after the integration trial (18 November 2026)
 
-Correction: another session had already run a research round on the same nine repositories and built I1–I5 (see handover.md, "Research round"): evidence kinds and two exchanges for lasting states (I1), fact weight from a kind list (I2), a speaker on quotes (I3), milestone wording plus a check pass (I4), and cheaper calls with a cost table (I5). The 12h08 chat in B is that session's live check, not the owner's play. 111 tests pass.
+Correction from the [archived research round](archive/handover-2026-11-18.md#research-round-nine-other-extensions-18-nov-2026). The earlier implementation added evidence kinds and two exchanges for lasting states (I1), fact weight from a kind list (I2), a speaker on quotes (I3), milestone wording plus a check pass (I4), and cheaper calls with a cost table (I5). The recorded test count at the time was 111.
 
 What B's chats show on top of that:
 

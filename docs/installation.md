@@ -8,13 +8,13 @@
 
 ## 1. Install the extension
 
-1. To install the currently published V2 source, open **Extensions → Install extension** in SillyTavern and enter `https://github.com/fadust/agnostic-narrator-v2`.
+1. To install rc.6, download the installer ZIP and copy its `narrator-director/` folder into `SillyTavern/public/scripts/extensions/third-party/`. Put `manifest.json` directly in that folder. The separate card, preset and Quick Reply imports are at the root of the ZIP. [rc.6 installer ZIP](https://github.com/fadust/agnostic-narrator-v2/releases/download/v0.3.0-rc.6/agnostic-narrator-v2-0.3.0-rc.6.zip)
 
-   Or by hand: download the release zip and copy its `narrator-director` folder to `SillyTavern/public/scripts/extensions/third-party/`. `manifest.json` must sit directly in that folder.
+   To install from the repository, open **Extensions → Install extension** and enter `https://github.com/fadust/agnostic-narrator-v2`. To install from a source archive by hand, put `manifest.json`, `index.js`, `style.css`, `core/`, `st/` and `LICENSE` from its repository root in `narrator-director/`.
 2. Reload SillyTavern.
 3. Open **Extensions**. A **Narrator Director** panel should be listed.
 
-The card, preset and quick replies are not installed by the extension: download them from the release page or the `dist/` folder and import them as below.
+The steps below use `dist/` paths for a source installation. In the installer ZIP, use the same filenames at its root.
 
 ## 2. Import the narrator card
 
@@ -29,8 +29,8 @@ The card, preset and quick replies are not installed by the extension: download 
 
    | Setting | Value | Change it when |
    | --- | --- | --- |
-   | Context size | 200,000 | Your model's window is smaller, or you want the full window of a 1M model |
-   | Unlocked context size | On | Never; it lets the slider reach the value above |
+   | Context size | 200,000 | Your model's window is smaller, or you want to limit the history sent per request |
+   | Unlocked context size | On | Keep it on if your selected context size requires the unlocked slider |
    | Response length | 1,500 | You change the length rules in the preset |
 
 The presets are optional. The Director and Narrator card supply story context with either companion preset or a preset of your own.
@@ -76,6 +76,8 @@ Under **Extensions → Quick Reply**, import `dist/Narrator Director.quickreplie
 5. After the reply, the **Log** tab shows what the observer was sent and what it answered.
 
 If any step fails, see [Troubleshooting](troubleshooting.md).
+
+To check command availability without running it, type `/director` in the composer and look for `/director checkplan` in the autocomplete details. Clear the draft afterward.
 
 ## Updating
 

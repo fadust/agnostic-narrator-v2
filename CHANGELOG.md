@@ -7,6 +7,7 @@ Newest first. Each entry says which parts changed, so you know what to re-import
 - `/director checkplan` checks queued beats against the scene, established facts, and the selected memory provider. It saves supported corrections under the existing beat IDs.
 - An exact quote from earlier BaiBai Book memory or another provider with historical reads can establish a missing fact or meet a milestone criterion after a separate evidence check. Planning and spine drafts also use the selected provider.
 - Updating the Director extension is sufficient. The Narrator card and presets need no re-import.
+- The GitHub prerelease has a tested installer ZIP built from the `96c414d` tag. [Installation steps](docs/installation.md#1-install-the-extension) · [Package and audit verification](docs/v2-verification.md)
 
 # 0.3.0-rc.5 (Agnostic Narrator V2)
 

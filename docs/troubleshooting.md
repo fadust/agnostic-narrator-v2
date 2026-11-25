@@ -7,11 +7,12 @@ Start with the inspector (`/director inspect`). **Now** shows what the narrator 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | No Narrator Director panel under Extensions | The folder is misplaced or nested one level too deep | `manifest.json` must be directly inside `third-party/narrator-director/` |
+| `/director checkplan` is missing from autocomplete help | The tab or installed extension may be older than rc.6 | Check the installed version, update the extension if needed, and reload SillyTavern. [Installation](installation.md) |
 | Inspector says `inactive` | The open chat has no Narrator card | Open a chat with the Narrator card, or add it to a group with your cards. Another card is never used as narrator |
 | No story profile is drafted | The director call failed, or there is no material to read | Check **Log**. Add a scenario, persona or cast, then `/director profile` |
 | Director errors in **Log** | The director's profile cannot reach its model | Fix the profile, then `/director retry` |
-| Replies cut off mid-sentence | Response length is too low | Raise it; the companion preset sets 1,200 |
-| The narrator forgets recent events | Context size is too small | Raise it; the companion preset sets 200,000 |
+| Replies cut off mid-sentence | The model may hit its answer limit | Check **Response length** and the provider limit. The companion presets set 1,500 tokens |
+| The narrator forgets recent events | The history may have fallen outside the model's usable context | Check the provider's context window and your memory settings. The companion presets request up to 200,000 tokens |
 
 ## The narrator
 

@@ -1,5 +1,7 @@
 # Package audit, 22 Nov 2026 (whole package at HEAD, after 0.2.0)
 
+This is the original 0.2.0-era audit. Its version, baseline counts, proposed changes and severity reflect that snapshot. See [current rc.6 package findings](v2-verification.md#22-november-package-audit-against-rc6).
+
 Four read-only audits of the whole package, not only recent changes:
 1. extension code;
 2. card, preset, quick replies, regex and lorebook;
