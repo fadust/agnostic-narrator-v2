@@ -44,6 +44,7 @@ export function replyOf(messages) {
 
 export function defaultScript(module, messages) {
     if (module === 'observer') return fakeObserver(replyOf(messages));
+    if (module === 'observer-check') return { verdicts: [{ id: 'beat', verdict: 'confirm' }] };
     if (module === 'planner') {
         if (messages[0].content.includes('outline the arc')) {
             return { goal: 'Settle the debt', forces: ['the guild', 'the family'], payoff: { name: 'the reckoning', act: 3, hooks: ['a seal'] }, endings: [{ title: 'Paid' }, { title: 'Fled' }] };

@@ -157,6 +157,7 @@ test('the whole loop through the director: drafted after the arc, marked by the 
         }
         if (module === 'summariser' && system.startsWith(CONCLUSION_SYSTEM)) { concluded++; return JSON.stringify({ conclusion: 'He found a brother in Ser Corwin and gold for swords.' }); }
         if (module === 'observer') assert.ok(!messages[1].content.includes('m1-c1'), 'the observer never sees the spine');
+        if (module === 'tracker-check') return JSON.stringify({ verdicts: ['m1-c1', 'm1-c2'].map(id => ({ id, verdict: 'confirm' })) });
         if (module === 'tracker' && messages[1].content.includes(reply)) {
             observed++;
             assert.ok(messages[1].content.includes('m1-c1') && messages[1].content.includes('I report for work.'), 'the tracker sees open criteria and the player\'s message');
@@ -188,6 +189,7 @@ async function spinedDirector(chat, settings, answer) {
     host.call = async (module, messages, ...rest) => {
         if (module === 'planner' && messages[0].content.startsWith(SPINE_SYSTEM)) return JSON.stringify({ question: 'q', endings: [{ title: 'Throne', criteria: ['loyalists rallied'] }, { title: 'Marriage', criteria: ['the daughter trusts him'] }], milestones: [{ title: 'Allies', criteria: ['the commander stands with him', 'gold for swords'] }] });
         if (module === 'tracker') { calls.push(messages[1].content); return JSON.stringify(answer(messages[1].content)); }
+        if (module === 'tracker-check') return JSON.stringify({ verdicts: ['m1-c1', 'm1-c2'].map(id => ({ id, verdict: 'confirm' })) });
         return call(module, messages, ...rest);
     };
     await director.kick();

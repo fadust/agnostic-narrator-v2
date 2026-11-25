@@ -220,7 +220,9 @@ await check('the planner ran after the first reply; the player profile was deriv
 });
 
 mock.control.narration = 'Mira smiles and hands you the bucket at the Greywell Square. Old Tam spits and looks away from the water. A grey film clings to the rim of the bucket.';
+mock.control.observerBeat = 'complete';
 await send('I try to outrun Mira to the well.');
+mock.control.observerBeat = 'untouched';
 await check('turn 2: one intent, never the queue; cast lines in words; lore keys reach World Info only by scan', async () => {
     const text = flat(lastPrompt());
     const brief = briefOf(lastPrompt());
@@ -238,6 +240,8 @@ await check('turn 2: one intent, never the queue; cast lines in words; lore keys
     });
     assert(receipt?.beat && receipt.clues.length === 1, 'the assembled cue did not reach the saved reply');
     assert(observation?.beat === receipt.beat, 'the Observer did not use the recorded cue');
+    assert(observation.delta.direction.beat === 'untouched', 'an unrelated reply quote completed the beat');
+    assert(observation.rejected.some(r => r.kind === 'direction' && r.reason.includes('does not show its taste')), 'the semantic rejection was not recorded');
 });
 await check('/listvar-visible variables hold no beat, clue or belief', async () => {
     const vars = JSON.stringify(await ev(() => SillyTavern.getContext().chatMetadata.variables));

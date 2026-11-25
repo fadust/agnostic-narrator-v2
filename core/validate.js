@@ -539,11 +539,11 @@ export function validateTracking(raw, ctx) {
     return { delta, rejected, accepted };
 }
 
-/** The text around a quote in a reply, for the "met" check: about a sentence either side. */
+/** The text around a quote in its source, for the evidence checker. */
 export function aroundQuote(text, quote, pad = 200) {
     const hay = String(text ?? '');
     const q = String(quote ?? '').trim();
-    let at = q ? hay.toLowerCase().indexOf(q.slice(0, 24).toLowerCase()) : -1;
+    let at = q ? hay.toLowerCase().indexOf(q.toLowerCase()) : -1;
     // A quote matched with a name/pronoun swap: find the reply's own wording of it.
     if (at === -1 && q) {
         const own = matchQuote(q, hay);
@@ -553,13 +553,19 @@ export function aroundQuote(text, quote, pad = 200) {
     return hay.slice(Math.max(0, at - pad), at + q.length + pad).replace(/\s+/g, ' ').trim();
 }
 
-/** The "met" check's answer: a verdict per known id. A rejection needs a reason. Missing ids are left out (kept). */
-export function validateTrackCheck(raw, ids) {
+/** Accept a single verdict per known claim. Repeated or missing verdicts confer no confirmation. */
+export function validateEvidenceCheck(raw, ids) {
     if (!isObj(raw) || !Array.isArray(raw.verdicts)) return { ok: false, error: 'no verdicts' };
     const known = new Set(arr(ids));
+    const seen = new Set();
     const out = {};
     for (const v of raw.verdicts) {
-        if (!isObj(v) || !known.has(v.id) || v.id in out) continue;
+        if (!isObj(v) || !known.has(v.id)) continue;
+        if (seen.has(v.id)) {
+            delete out[v.id];
+            continue;
+        }
+        seen.add(v.id);
         if (v.verdict === 'confirm') out[v.id] = { verdict: 'confirm' };
         else if (v.verdict === 'reject' && str(v.reason, 200)) out[v.id] = { verdict: 'reject', reason: str(v.reason, 200) };
     }
@@ -567,8 +573,8 @@ export function validateTrackCheck(raw, ids) {
 }
 
 /**
- * Apply the "met" check to a validated tracker batch: rejected marks move to the refused list and the criterion stays
- * open; a "happened" that no longer has one of its milestone's criteria met in the batch goes with them.
+ * Keep only confirmed quoted claims. A player-settled matter was checked by id before this pass.
+ * A confirmed "happened" also needs surviving criterion support when the checklist has open criteria.
  * @param {{delta: object, rejected: object[], accepted: number}} v validateTracking's result (not changed)
  * @param {Record<string, {verdict: string, reason?: string}>} verdicts
  * @param {Record<string, string[]>} [milestoneCriteria]
@@ -579,8 +585,8 @@ export function applyTrackCheck(v, verdicts, milestoneCriteria = {}) {
     const marks = [];
     for (const m of v.delta.marks) {
         const verdict = verdicts?.[m.id];
-        if (m.mark === 'met' && verdict?.verdict === 'reject') {
-            rejected.push({ kind: 'spine', reason: `check: ${verdict.reason}`, item: m });
+        if (!m.settled && verdict?.verdict !== 'confirm') {
+            rejected.push({ kind: 'spine', reason: `check: ${verdict?.reason ?? 'no confirming verdict'}`, item: m });
             accepted--;
         } else marks.push(m);
     }
@@ -588,8 +594,10 @@ export function applyTrackCheck(v, verdicts, milestoneCriteria = {}) {
     for (const h of v.delta.happened) {
         const own = arr(milestoneCriteria[h.milestone]);
         const supporting = marks.filter(m => m.mark === 'met' && own.includes(m.id));
-        if (own.length && !supporting.length) {
-            rejected.push({ kind: 'spine', reason: 'check: none of its criteria still met', item: h });
+        const verdict = verdicts?.[h.milestone];
+        if (verdict?.verdict !== 'confirm' || (own.length && !supporting.length)) {
+            const reason = verdict?.verdict === 'confirm' ? 'none of its criteria still met' : (verdict?.reason ?? 'no confirming verdict');
+            rejected.push({ kind: 'spine', reason: `check: ${reason}`, item: h });
             accepted--;
         } else happened.push({ ...h, support: supporting.map(m => m.id),
             at: Math.max(h.exchange, ...supporting.map(m => Math.max(m.exchange, m.also?.exchange ?? 0))) });

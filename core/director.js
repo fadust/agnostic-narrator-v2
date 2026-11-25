@@ -1,13 +1,14 @@
 // The director's pipeline. All SillyTavern access goes through `host`, so this runs unchanged in tests and fixtures.
 
 import { extractJson } from './json.js';
+import { beatText } from './beat.js';
 import { buildLorebook } from './lore.js';
 import { memoryMode, plannerMemory } from './memory.js';
 import { planTrigger, queuedBeatText, validateArc, validateConclusion, validateGenre, validatePlan, validateProfile, validateSpine, validateSpineRewrites } from './planner.js';
-import { arcPrompt, cleanupPrompt, conclusionPrompt, genrePrompt, observerPrompt, planPrompt, profilePrompt, spineCheckPrompt, spinePrompt, summariserPrompt, trackCheckPrompt, trackerPrompt } from './prompts.js';
+import { arcPrompt, beatCheckPrompt, cleanupPrompt, conclusionPrompt, genrePrompt, observerPrompt, planPrompt, profilePrompt, spineCheckPrompt, spinePrompt, summariserPrompt, trackCheckPrompt, trackerPrompt } from './prompts.js';
 import { applySpineRewrites, emptySpine, findCriterion, flagSpine, needsConclusion, spineIds, spineTrigger } from './spine.js';
 import { activeRevision, castPeople, ensureCast, logOp, playerSettled, rawTextHash, reconcile, replay, scan, storyBasis, visibleText } from './state.js';
-import { aroundQuote, applyTrackCheck, validateCleanup, validateObservation, validateTrackCheck, validateTracking } from './validate.js';
+import { aroundQuote, applyTrackCheck, validateCleanup, validateEvidenceCheck, validateObservation, validateTracking } from './validate.js';
 import { arr, hash, roughTokens, str } from './util.js';
 import { planCheckContext, reviewPlan, validatePlanRewrites } from './plancheck.js';
 import { planCheckPrompt } from './prompts.js';
@@ -89,7 +90,7 @@ export function storyCards(state, chat, narrator, entries, cap = 1800) {
 }
 
 /** Check calls run on their parent role's connection profile, temperature and answer limit, but are logged apart. */
-const ROLE_OF = { 'tracker-check': 'tracker', 'planner-check': 'planner' };
+const ROLE_OF = { 'observer-check': 'observer', 'tracker-check': 'tracker', 'planner-check': 'planner' };
 
 const COOL_MS = 90_000;
 const MEMORY_MS = 5_000;
@@ -313,7 +314,7 @@ export class Director {
      * One model call, serialised per connection profile, logged for the inspector. An observer call goes ahead of calls
      * that are queued but not started (after any observer calls already waiting): the next turn's notes rest on the
      * observer, so it never waits behind planning, tracking or checks. A running call is never interrupted.
-     * Check calls ('tracker-check', 'planner-check') use their parent role's profile, temperature and answer limit.
+     * Check calls use their parent role's profile, temperature and answer limit.
      */
     model(module, messages) {
         if (!this.owns()) return Promise.reject(new Error('superseded'));
@@ -325,9 +326,9 @@ export class Director {
         const epoch = this.epoch, signal = this.abort.signal;
         return new Promise((resolve, reject) => {
             const job = { module, run: () => this.runCall(module, role, messages, cfg, epoch, signal), resolve, reject };
-            if (module === 'observer') {
+            if (role === 'observer') {
                 let at = 0;
-                while (at < q.jobs.length && q.jobs[at].module === 'observer') at++;
+                while (at < q.jobs.length && (ROLE_OF[q.jobs[at].module] ?? q.jobs[at].module) === 'observer') at++;
                 q.jobs.splice(at, 0, job);
             } else q.jobs.push(job);
             this.drain(q);
@@ -618,6 +619,23 @@ export class Director {
                 player: before.meta.player, playerMessage,
                 known: [playerMessage, ...before.canon.map(f => f.fact), ...before.uncertain.map(f => f.fact)].join('\n'),
             });
+            const direction = v.delta.direction;
+            if (direction.proof) {
+                const { proof } = direction;
+                const text = proof.source === 'player' ? playerMessage : entry.text;
+                const prompt = beatCheckPrompt({
+                    goal: beatText(beat).goal, outcome: direction.beat, player: before.meta.player,
+                    proof, context: aroundQuote(text, proof.quote),
+                });
+                const verdict = (await this.checkEvidence('observer-check', prompt, ['beat'])).beat;
+                if (!this.owns(epoch)) return false;
+                if (!stillCurrent()) { this.again = true; return false; }
+                if (verdict?.verdict !== 'confirm') {
+                    v.rejected.push({ kind: 'direction', reason: `check: ${verdict?.reason ?? 'no confirming verdict'}`, item: { ...direction } });
+                    direction.beat = 'untouched';
+                    direction.proof = null;
+                }
+            }
             this.recovered('observer');
             rec.obs = { hash: entry.hash, revision: entry.revision, player: playerBasis, delta: v.delta, accepted: v.accepted, rejected: slimRejected(v.rejected), beat: beat?.id ?? null, at: Date.now(), strip: [...(this.host.narrator()?.strip ?? [])] };
             delete rec.err;
@@ -755,30 +773,37 @@ export class Director {
         }
     }
 
-    /**
-     * Second check before "met": one cheap call for every "met" mark in the batch, on the tracker's profile. No such
-     * mark, no call. A rejected mark is refused and its criterion stays open. If the check fails, the marks stand as
-     * the tracker gave them (owner, 18 Nov 2026): a failed check never stalls the spine.
-     */
+    /** Check the quoted spine claims together, independently of the initial tracker answer. */
     async checkMarks(v, texts, state, ids) {
-        const epoch = this.epoch;
-        const met = v.delta.marks.filter(m => m.mark === 'met');
-        if (!met.length) return v;
-        const items = met.map(m => {
+        const context = item => aroundQuote(texts[item.exchange - 1], item.quote);
+        const items = v.delta.marks.filter(m => !m.settled).map(m => {
             const c = findCriterion(state.spine, m.id)?.criterion;
             return {
-                id: m.id, criterion: c?.text ?? '', role: c?.role ?? '', quote: m.quote,
-                context: aroundQuote(texts[m.exchange - 1], m.quote), speaker: m.speaker ?? '',
-                ...(m.also ? { also: { ...m.also, context: aroundQuote(texts[m.also.exchange - 1], m.also.quote) } } : {}),
+                id: m.id, mark: m.mark, criterion: c?.text ?? '', role: c?.role ?? '', reason: m.reason, quote: m.quote,
+                context: context(m), speaker: m.speaker ?? '',
+                ...(m.also ? { also: { ...m.also, context: context(m.also) } } : {}),
             };
         });
+        for (const h of v.delta.happened) {
+            const milestone = state.spine.milestones.find(m => m.id === h.milestone);
+            items.push({
+                id: h.milestone, mark: 'happened', milestone: milestone?.title,
+                criteria: arr(milestone?.criteria).map(c => c.text), quote: h.quote, speaker: h.speaker, context: context(h),
+            });
+        }
+        if (!items.length) return v;
+        const verdicts = await this.checkEvidence('tracker-check', trackCheckPrompt({ items }), items.map(i => i.id));
+        return applyTrackCheck(v, verdicts, ids.milestoneCriteria);
+    }
+
+    async checkEvidence(module, prompt, ids) {
+        const epoch = this.epoch;
         try {
-            const verdicts = await this.json('tracker-check', trackCheckPrompt({ items }), raw => validateTrackCheck(raw, items.map(i => i.id)));
-            return applyTrackCheck(v, verdicts, ids.milestoneCriteria);
+            return await this.json(module, prompt, raw => validateEvidenceCheck(raw, ids));
         } catch (e) {
             if (!this.owns(epoch) || String(e?.message) === 'superseded' || e?.name === 'AbortError') throw e;
-            this.fail('tracker-check', e);
-            return v;
+            this.fail(module, e);
+            return {};
         }
     }
 

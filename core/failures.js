@@ -2,7 +2,7 @@
 // console and the inspector's Log tab, so a broken model or profile quietly stopped the director).
 
 const LABELS = {
-    observer: 'reading replies', tracker: 'tracking the story spine', 'tracker-check': 'checking spine marks',
+    observer: 'reading replies', 'observer-check': 'checking beat evidence', tracker: 'tracking the story spine', 'tracker-check': 'checking spine marks',
     planner: 'planning', 'planner-check': 'checking the plan', spine: 'drafting the story spine', genre: 'the story profile',
     profile: 'character profiles', summariser: 'summaries', cleanup: 'tidying facts', conclusion: 'closing milestones',
 };

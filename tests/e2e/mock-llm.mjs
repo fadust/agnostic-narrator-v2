@@ -49,9 +49,12 @@ export function startMock(port = 8124) {
                     ? [{ who: 'Mira', toward: 'the player', axis: 'trust', dir: 'up', weight: 'minor', category: 'words', quote: sentences.find(s => s.includes('Mira')) }] : [],
                 lore: loc ? [{ keys: [loc[1].replace(/^the /, '')], text: `${loc[1]} is a place in this story.`, kind: 'place', quote: sentences.find(s => s.includes(loc[1])) }] : [],
                 contradictions: control.contradict ? [{ quote: sentences[0], conflicts_with: 'Old Tam is dead', correction: 'Old Tam is dead and cannot speak; treat the voice as a memory' }] : [],
-                direction: { beat: control.observerBeat, clues_found: [] },
+                direction: { beat: control.observerBeat, source: 'reply', quote: sentences[0], clues_found: [] },
             };
             return { kind: 'observer', text: '```json\n' + JSON.stringify(out) + '\n```' };
+        }
+        if (sys.includes('You check a proposed beat outcome')) {
+            return { kind: 'observer-check', text: JSON.stringify({ verdicts: [{ id: 'beat', verdict: 'reject', reason: 'handling the bucket does not show its taste' }] }) };
         }
         // Modules added after 0.1.0: spine, its check, the tracker and its check, plan check, fact clean-up, conclusions.
         if (sys.includes('You draft the spine of an interactive story')) {

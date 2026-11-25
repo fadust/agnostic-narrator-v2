@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Director } from '../../core/director.js';
 import { trackCheckPrompt } from '../../core/prompts.js';
-import { applyTrackCheck, aroundQuote, validateTrackCheck } from '../../core/validate.js';
-import { NARRATOR } from './helpers.mjs';
+import { logOp, storyBasis } from '../../core/state.js';
+import { applyTrackCheck, aroundQuote, validateEvidenceCheck } from '../../core/validate.js';
+import { makeHost, NARRATOR, narr, user } from './helpers.mjs';
 
 function hostWith(call, settings = {}) {
     return {
@@ -54,25 +55,29 @@ const V = () => ({
     rejected: [], accepted: 4,
 });
 
-test('the "met" check keeps confirmed marks, refuses rejected ones, and drops a "happened" left without a met criterion', () => {
-    const verdicts = validateTrackCheck({ verdicts: [
+test('only confirmed claims stand, and a milestone needs both its own verdict and criterion support', () => {
+    const verdicts = validateEvidenceCheck({ verdicts: [
         { id: 'm1-c1', verdict: 'reject', reason: 'a tally, not the forfeit satisfied' },
-        { id: 'm1-c2', verdict: 'reject' }, // no reason: ignored, the mark stands
+        { id: 'm1-c2', verdict: 'confirm' },
+        { id: 'e1-c1', verdict: 'confirm' },
+        { id: 'm1', verdict: 'confirm' },
         { id: 'zz', verdict: 'reject', reason: 'unknown id' },
-    ] }, ['m1-c1', 'm1-c2']).value;
-    assert.deepEqual(Object.keys(verdicts), ['m1-c1']);
+    ] }, ['m1-c1', 'm1-c2', 'e1-c1', 'm1']).value;
+    assert.deepEqual(Object.keys(verdicts), ['m1-c1', 'm1-c2', 'e1-c1', 'm1']);
     const out = applyTrackCheck(V(), verdicts, { m1: ['m1-c1', 'm1-c2'] });
     assert.deepEqual(out.delta.marks.map(m => m.id), ['m1-c2', 'e1-c1']);
     assert.equal(out.delta.happened.length, 1, 'm1-c2 is still met, so the turning point stands');
     assert.equal(out.rejected[0].reason, 'check: a tally, not the forfeit satisfied');
 
-    const both = applyTrackCheck(V(), { 'm1-c1': { verdict: 'reject', reason: 'x' }, 'm1-c2': { verdict: 'reject', reason: 'y' } }, { m1: ['m1-c1', 'm1-c2'] });
+    delete verdicts.m1;
+    assert.equal(applyTrackCheck(V(), verdicts, { m1: ['m1-c1', 'm1-c2'] }).delta.happened.length, 0);
+    const both = applyTrackCheck(V(), { m1: { verdict: 'confirm' } }, { m1: ['m1-c1', 'm1-c2'] });
     assert.equal(both.delta.happened.length, 0);
-    assert.equal(both.accepted, 1);
-    assert.equal(both.delta.marks[0].mark, 'failed', 'failures are never checked');
+    assert.equal(both.accepted, 0);
+    assert.equal(both.delta.marks.length, 0, 'even a quoted failure needs a verdict');
 });
 
-test('checkMarks: no met mark, no call; a failed check keeps the marks', async () => {
+test('checkMarks: no quoted claim, no call; a failed check leaves the criteria open', async () => {
     const calls = [];
     const state = { spine: { endings: [], milestones: [{ id: 'm1', title: 'T', status: 'open', criteria: [{ id: 'm1-c1', text: 'The forfeit is satisfied', mark: 'open' }, { id: 'm1-c2', text: 'Elizabeth has asked Max', mark: 'open' }] }] } };
     const ids = { milestoneCriteria: { m1: ['m1-c1', 'm1-c2'] } };
@@ -83,23 +88,64 @@ test('checkMarks: no met mark, no call; a failed check keeps the marks', async (
 
     const broken = new Director(hostWith(async () => ''));
     const v = V();
-    assert.equal(await broken.checkMarks(v, ['text'], state, ids), v, 'empty answer: marks stand as given');
+    assert.equal((await broken.checkMarks(v, ['text'], state, ids)).accepted, 0);
 
     const judge = new Director(hostWith(async (role, messages) => {
         assert.equal(role, 'tracker-check');
         assert.match(messages[1].content, /Criterion: The forfeit is satisfied/);
         assert.match(messages[1].content, /Speaks or acts in the quote: Elizabeth/);
+        assert.match(messages[1].content, /Claim: failed/);
         return JSON.stringify({ verdicts: [{ id: 'm1-c1', verdict: 'reject', reason: 'only a tally' }, { id: 'm1-c2', verdict: 'confirm' }] });
     }));
     const out = await judge.checkMarks(V(), ['Then the bailiff makes the tally and Elizabeth asks him plainly.'], state, ids);
-    assert.deepEqual(out.delta.marks.map(m => m.id), ['m1-c2', 'e1-c1']);
+    assert.deepEqual(out.delta.marks.map(m => m.id), ['m1-c2']);
 });
 
 test('the check prompt carries only the marks, and the text around a quote', () => {
     const text = 'One. Two three four. Elizabeth asks him plainly what he means. Five six.';
     assert.match(aroundQuote(text, 'Elizabeth asks him plainly', 10), /four\. Elizabeth asks him plainly what he/);
     assert.equal(aroundQuote(text, 'not there'), 'not there');
-    const [sys, user] = trackCheckPrompt({ items: [{ id: 'm1-c1', criterion: 'C', quote: 'Q', context: 'X Q Y' }] });
+    const [sys, user] = trackCheckPrompt({ items: [{ id: 'm1-c1', mark: 'met', criterion: 'C', quote: 'Q', context: 'X Q Y' }] });
     assert.match(sys.content, /someone other than the person the criterion names/);
-    assert.match(user.content, /## MARK m1-c1\nCriterion: C\nQuote: Q\nAround it: X Q Y\nSpeaks or acts in the quote: not known/);
+    assert.match(user.content, /## MARK m1-c1\nClaim: met\nCriterion: C\nQuote: Q\nAround it: X Q Y\nSpeaks or acts in the quote: not known/);
+});
+
+test('a criterion cannot advance with two conflicting verdicts for its quote', () => {
+    const { value } = validateEvidenceCheck({ verdicts: [
+        { id: 'm1-c1', verdict: 'confirm' },
+        { id: 'm1-c1', verdict: 'reject', reason: 'an unrelated action' },
+    ] }, ['m1-c1']);
+    assert.deepEqual(value, {});
+});
+
+test('the Observer only completes a beat when its quote proves the exact goal', async () => {
+    const goal = 'Haruka says goodbye to Dachi before he leaves.';
+    for (const [quote, verdicts, expected] of [
+        ['Haruka tells Max to stand up.', [{ id: 'beat', verdict: 'reject', reason: 'Haruka addresses Max' }], 'untouched'],
+        ['Haruka tells Max to stand up.', [], 'untouched'],
+        ['Haruka bids Dachi goodbye at the door.', [{ id: 'beat', verdict: 'confirm' }], 'complete'],
+    ]) {
+        const chat = [user('I watch from the hall.')];
+        logOp(chat[0], { by: 'player', kind: 'plan', value: { beats: [{ goal, pressure: 'Dachi reaches for the latch.', type: 'choice' }] } });
+        const { director, host } = makeHost(chat, {
+            script: () => ({ summary: 'Haruka speaks.', direction: { beat: 'complete', quote, source: 'reply' } }),
+        });
+        director.sync();
+        const [beat] = director.view().beats;
+        const reply = narr(quote);
+        reply.extra.narratorCue = { beat: beat.id, clues: [], basis: storyBasis(chat, NARRATOR) };
+        chat.push(reply);
+        const call = host.call;
+        host.call = async (module, messages, ...rest) => {
+            if (module !== 'observer-check') return call(module, messages, ...rest);
+            assert.ok(messages[1].content.includes(goal));
+            assert.ok(messages[1].content.includes(quote));
+            return JSON.stringify({ verdicts });
+        };
+        director.sync();
+        assert.equal(await director.observe(director.readings().entries.at(-1)), true);
+        assert.equal(reply.extra.narrator.obs.delta.direction.beat, expected);
+        assert.equal(reply.extra.narrator.obs.delta.summary, 'Haruka speaks.');
+        assert.equal(director.view().beats[0].status, expected === 'complete' ? 'complete' : 'queued');
+    }
 });

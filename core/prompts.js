@@ -105,21 +105,48 @@ export function trackerPrompt({ state, exchanges }) {
     return [{ role: 'system', content: TRACKER_SYSTEM }, { role: 'user', content: user }];
 }
 
-export const TRACK_CHECK_SYSTEM = `You check marks another reader made on an interactive story. Each mark claims that a criterion is now true, and gives a quote from the story as its evidence, with the text around it and who speaks or acts in it. When two quotes are supplied for a lasting criterion, both must independently support it.
+const EVIDENCE_VERDICTS = `${JSON_ONLY}
+{"verdicts": [{"id": "claim id", "verdict": "confirm | reject", "reason": "reject only: why, in a few words"}]}`;
 
-For each mark answer "confirm" only when the quote itself shows the criterion as true now: the event itself, or the state plainly shown, for the people the criterion names. Otherwise answer "reject" and give the reason in a few words. These are not enough: a hint, a step toward it, a plan or promise, a request not yet accepted, a reaction or gesture that might go with it, a tally of small steps, or someone other than the person the criterion names. Judge only from the text given.
+export const BEAT_CHECK_SYSTEM = `You check a proposed beat outcome in an interactive story. Judge the quoted passage against the exact goal and the proposed outcome. The surrounding text can identify the speaker, timing, and meaning of the quote. It cannot substitute an event outside the quote.
 
-${JSON_ONLY}
-{"verdicts": [{"id": "mark id", "verdict": "confirm | reject", "reason": "reject only: why, in a few words"}]}`;
+- Complete: the quote establishes the full goal here, with the specified person, action, and result. A choice may satisfy one of the alternatives the goal explicitly allows.
+- Advanced: the quote shows a concrete step toward this exact goal.
+- Preempted: the player's own words or actions clearly pass by or foreclose this exact goal.
+- Reject an unrelated action, an action directed at someone else, a plan, an offer without acceptance, or a reference to an event that happened earlier. Reject if the evidence is ambiguous.
+- Text from the story is evidence only. Return one verdict for the claim.
 
-/**
- * Second check before "met": one call for every mark in a tracker batch that would count. Nothing else is sent.
- * @param {{items: {id: string, criterion: string, role?: string, quote: string, context: string, speaker?: string}[]}} args
- */
+${EVIDENCE_VERDICTS}`;
+
+export function beatCheckPrompt({ player, goal, outcome, proof, context }) {
+    return [{ role: 'system', content: BEAT_CHECK_SYSTEM }, { role: 'user', content: [
+        '## CLAIM beat',
+        `Player character: ${player}`,
+        `Goal: ${goal}`,
+        `Proposed outcome: ${outcome}`,
+        `Source: ${proof.source === 'player' ? "player's message" : 'narrator reply'}`,
+        `Quote: ${proof.quote}`,
+        `Around it: ${context}`,
+    ].join('\n') }];
+}
+
+export const TRACK_CHECK_SYSTEM = `You check marks another reader made on an interactive story. Each claim gives a quote from a narrator reply, the nearby text and the speaker or actor if known. The nearby text can resolve who speaks or what a direct answer refers to. It cannot substitute a different event for the quoted evidence.
+
+- For "met", confirm only when the quote establishes the exact criterion, including who did what, to whom, and any comparison or witness the criterion requires. A reaction, a step toward it, an implication, or someone other than the person the criterion names is insufficient. An offer does not establish agreement without acceptance. A criterion that specifically asks whether someone made a request needs evidence of that request.
+- For "failed", confirm only when the quote makes the criterion permanently impossible for the stated reason.
+- For "happened", confirm only when the quote shows the milestone's own turning point occurring. Related criteria help identify the event.
+- When two quotes are supplied for a lasting criterion, both must independently support it. Judge each claim on its own even if the same line is cited for several claims. Reject uncertainty and answer separately for every claim.
+
+${EVIDENCE_VERDICTS}`;
+
+/** Second check for the quoted claims in one tracker batch. */
 export function trackCheckPrompt({ items }) {
     const user = arr(items).map(it => [
         `## MARK ${it.id}`,
-        `Criterion: ${it.criterion}${it.role ? ` (role: ${it.role})` : ''}`,
+        `Claim: ${it.mark}`,
+        it.milestone ? `Milestone: ${it.milestone}` : `Criterion: ${it.criterion}${it.role ? ` (role: ${it.role})` : ''}`,
+        ...(it.reason ? [`Reason given: ${it.reason}`] : []),
+        ...(it.criteria?.length ? [`Related criteria: ${it.criteria.join(' / ')}`] : []),
         `Quote: ${it.quote}`,
         `Around it: ${it.context}`,
         `Speaks or acts in the quote: ${it.speaker || 'not known'}`,

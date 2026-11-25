@@ -72,7 +72,7 @@ It never sees the spine. A separate **spine tracker** reads replies for the spin
 The planner drafts it once, after the arc, from the same material as the story profile: the setup's question, three or four endings that answer it in different ways, and three to five arc milestones as stepping stones. Each carries a checklist.
 
 - **Endings never close.** A failed criterion lowers that ending's progress, and the planner suggests an alternative by another route: a refusal from one house is not a refusal from every house.
-- **A second check before "met".** When a tracker batch would mark criteria met, one cheap call on the tracker's profile sees each criterion, its quote, the text around it and the speaker, and confirms or rejects. A rejected mark is refused and the criterion stays open. If the check fails, the marks stand.
+- **A second check for quoted claims.** One call on the tracker's profile checks each proposed criterion mark and milestone turning point against its quote, nearby text, and speaker. Each claim needs its own confirming verdict. Criteria settled by an explicit player decision still use the settled matter's ID.
 - **Skipped milestones.** When a later milestone concludes while an earlier one is open, the earlier one is skipped: no conclusion, no chapter, and it leaves the tracker and planner. It can be reopened on the Plan tab.
 - **Milestones conclude** when every criterion is met or failed, or on "Conclude now". A short conclusion is written from the marks and quotes, and the checklist is dropped. The conclusion is logged on the reply that resolved the milestone, so swiping that reply reopens it.
 - **State is judged per scene,** never by counting replies. A scene ends when the place changes or the planner's scene runs out of beats; a re-plan never ends one by itself, so a drifting stretch cannot set off a re-plan on every reply. Anything built toward an ending or milestone in the scene means building; a scene that closes with nothing built means drifting (but not while some of its replies still wait for the tracker); a quoted "against" turns that ending away. Drifting, a failed ending criterion, and turning from every ending each ask the planner for a new plan.
@@ -111,7 +111,7 @@ The planner keeps a short horizon: up to three scenes and six beats. The plan is
 
 The director offers the first queued opening that fits. A required place, required people or an unfinished prerequisite can hold a beat back. An independent opening can come up first, and a held beat stays available when its conditions are met.
 
-The observer quotes the narrator's reply for a world outcome and the player's own message for a player choice. A partial advance keeps the goal open. Earlier saved observations replay with the rules in effect when they were recorded.
+The observer quotes the narrator's reply for a world outcome and the player's own message for a player choice. When it proposes progress, a second call on the observer's profile checks the quote against the goal. A missing or negative verdict leaves the beat untouched. A confirmed partial advance keeps the goal open. Earlier saved observations replay with the rules in effect when they were recorded.
 
 The planner runs when the openings run out or threads run low, when you go off-plan, when the scene stalls (N replies recording nothing new), when the spine says you are drifting, and when you ask. Timed re-plans are off by default.
 

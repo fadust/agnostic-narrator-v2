@@ -36,7 +36,7 @@ async function completeMilestone(reverse = false) {
         }
         if (module === 'tracker-check') {
             evidenceChecks.push(messages.at(-1).content);
-            return JSON.stringify({ verdicts: [{ id: CRITERION, verdict: 'confirm' }] });
+            return JSON.stringify({ verdicts: [{ id: CRITERION, verdict: 'confirm' }, { id: 'm1', verdict: 'confirm' }] });
         }
         if (module === 'summariser' && messages[0].content.startsWith(CONCLUSION_SYSTEM)) {
             conclusionRequests.push(messages);

@@ -7,7 +7,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { CAPS } from '../core/enums.js';
-import { CONCLUSION_SYSTEM, OBSERVER_SYSTEM, PLAN_RULES, SPINE_SYSTEM, TRACKER_SYSTEM } from '../core/prompts.js';
+import { BEAT_CHECK_SYSTEM, CONCLUSION_SYSTEM, OBSERVER_SYSTEM, PLAN_RULES, SPINE_SYSTEM, TRACK_CHECK_SYSTEM, TRACKER_SYSTEM } from '../core/prompts.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => readFileSync(join(root, p), 'utf8');
@@ -62,6 +62,16 @@ ${quote(direction)}
 A separate call after each reply, only once the story has a spine. It reads the same reply for the spine and nothing else; the observer above does not judge the spine.
 
 ${quote(TRACKER_SYSTEM.slice(0, TRACKER_SYSTEM.indexOf(JSON_ONLY_MARK)).trim())}
+
+### Evidence checks
+
+The Observer checks proposed beat progress in a second call.
+
+${quote(BEAT_CHECK_SYSTEM.slice(0, BEAT_CHECK_SYSTEM.indexOf(JSON_ONLY_MARK)).trim())}
+
+The tracker checks its quoted claims together. Only claims that receive a confirmation are recorded.
+
+${quote(TRACK_CHECK_SYSTEM.slice(0, TRACK_CHECK_SYSTEM.indexOf(JSON_ONLY_MARK)).trim())}
 
 ## 5. Planner
 

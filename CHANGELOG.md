@@ -2,6 +2,12 @@
 
 Newest first. Each entry says which parts changed, so you know what to re-import.
 
+# 0.3.0-rc.5 (Agnostic Narrator V2)
+
+- The Observer asks a second reader to check proposed beat progress against the exact goal and its source quote. Progress only counts with a confirming verdict.
+- The spine tracker requires separate confirmation of each quoted criterion mark and milestone turning point. Missing verdicts leave the claims open. Existing saved observations remain readable.
+- Update the Director extension to get the evidence checks.
+
 # 0.3.0-rc.4 (Agnostic Narrator V2)
 
 - The Director offers the first queued opening that fits the current place, cast and prerequisites. A held opening remains available for a later turn.

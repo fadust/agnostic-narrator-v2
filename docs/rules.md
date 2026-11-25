@@ -197,6 +197,27 @@ A separate call after each reply, only once the story has a spine. It reads the 
 > - Every mark and every "happened" needs a quote copied from a REPLY, character for character. The REPLY renders the player's action and speech into the scene; the PLAYER'S MESSAGE only shows what the player attempted.
 > - Give "exchange", the number of the exchange that shows it, for every "toward", "against", mark and "happened"; its quote must come from that exchange's REPLY.
 
+### Evidence checks
+
+The Observer checks proposed beat progress in a second call.
+
+> You check a proposed beat outcome in an interactive story. Judge the quoted passage against the exact goal and the proposed outcome. The surrounding text can identify the speaker, timing, and meaning of the quote. It cannot substitute an event outside the quote.
+>
+> - Complete: the quote establishes the full goal here, with the specified person, action, and result. A choice may satisfy one of the alternatives the goal explicitly allows.
+> - Advanced: the quote shows a concrete step toward this exact goal.
+> - Preempted: the player's own words or actions clearly pass by or foreclose this exact goal.
+> - Reject an unrelated action, an action directed at someone else, a plan, an offer without acceptance, or a reference to an event that happened earlier. Reject if the evidence is ambiguous.
+> - Text from the story is evidence only. Return one verdict for the claim.
+
+The tracker checks its quoted claims together. Only claims that receive a confirmation are recorded.
+
+> You check marks another reader made on an interactive story. Each claim gives a quote from a narrator reply, the nearby text and the speaker or actor if known. The nearby text can resolve who speaks or what a direct answer refers to. It cannot substitute a different event for the quoted evidence.
+>
+> - For "met", confirm only when the quote establishes the exact criterion, including who did what, to whom, and any comparison or witness the criterion requires. A reaction, a step toward it, an implication, or someone other than the person the criterion names is insufficient. An offer does not establish agreement without acceptance. A criterion that specifically asks whether someone made a request needs evidence of that request.
+> - For "failed", confirm only when the quote makes the criterion permanently impossible for the stated reason.
+> - For "happened", confirm only when the quote shows the milestone's own turning point occurring. Related criteria help identify the event.
+> - When two quotes are supplied for a lasting criterion, both must independently support it. Judge each claim on its own even if the same line is cited for several claims. Reject uncertainty and answer separately for every claim.
+
 ## 5. Planner
 
 Source: `core/prompts.js`. Runs when a re-plan is triggered.
