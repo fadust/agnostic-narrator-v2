@@ -26,7 +26,7 @@ export function startMock(port = 8124) {
     function respond(messages) {
         const sys = flat(messages.filter(m => m.role === 'system'));
         const all = flat(messages);
-        if (sys.includes('record keeper for an interactive story')) {
+        if (sys.includes('You keep the record for an interactive story')) {
             if (control.failObserver) return { kind: 'observer', text: 'I cannot comply.' };
             const reply = all.split('## REPLY\n')[1] ?? '';
             const sentences = reply.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(s => s.length > 15).slice(0, 4);
