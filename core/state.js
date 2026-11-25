@@ -216,6 +216,7 @@ export function scan(chat, narrator, fingerprints = storyFingerprints(chat, narr
                 && (!rec.obs.player || (rec.obs.player.mid === (player?.narrator_id ?? null)
                     && rec.obs.player.revision === (player ? activeRevision(player, narrator) : null))),
             player, cue,
+            memoryValid: !!rec?.obs?.memoryBasis && validBasis({ basis: rec.obs.memoryBasis }, fingerprints),
             tracked: false, trackPart: undefined, trackValid: false,
         };
         if (m.is_user) player = m;
@@ -460,6 +461,7 @@ export function awakeThreads(state, after = state.meta?.dormantAfter ?? 12) {
 
 export function applyDelta(state, obs, entry) {
     const d = obs.delta;
+    const facts = arr(d.facts).filter(f => !f.memory || entry.memoryValid);
     const mid = entry.mid;
     const turn = state.meta.turn;
     const tag = obs.revision ? `${mid.slice(0, 8)}${obs.revision.slice(0, 8)}` : mid.slice(0, 8);
@@ -506,8 +508,8 @@ export function applyDelta(state, obs, entry) {
     if (s.initiative) state.scene.initiative = s.initiative;
     // A death told only as a fact ("Rulf dies of his wounds") marks them dead too (audit map, 22 Nov 2026: a dead man
     // stayed in play because no "dead" cast change came with it). The name must open the fact: "Max killed Rulf" is not Max's death.
-    for (const f of arr(d.facts)) {
-        if (f.certainty !== 'stated') continue;
+    for (const f of facts) {
+        if (f.memory || f.certainty !== 'stated') continue;
         for (const n of Object.keys(state.cast)) {
             if (n === player || state.cast[n].dead || state.cast[n].pc) continue;
             const esc = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -519,18 +521,20 @@ export function applyDelta(state, obs, entry) {
     }
 
     arr(d.facts).forEach((f, n) => {
+        if (f.memory && !entry.memoryValid) return;
         if (state.tombstones.some(t => similarity(t.fact, f.fact) >= 0.7)) return;
         // Models restate what is already on record. Canon keeps one copy; a hint that is now stated is promoted.
         if (state.canon.slice(-80).some(x => similarity(x.fact, f.fact) >= 0.85)) return;
         const hinted = state.uncertain.findIndex(x => similarity(x.fact, f.fact) >= 0.85);
         if (hinted !== -1) {
-            if (f.certainty === 'stated') state.canon.push({ ...state.uncertain.splice(hinted, 1)[0], quote: f.quote, confirmed: mid });
+            if (f.certainty === 'stated') state.canon.push({ ...state.uncertain.splice(hinted, 1)[0], quote: f.quote, confirmed: mid, ...(f.memory ? { memory: f.memory } : {}) });
             return;
         }
         const id = `${tag}-${n}`;
         const witnesses = f.witnesses === 'present' ? [...state.scene.present] : arr(f.witnesses);
         // Records from before facts were weighed carry no weight: they count as major, so nothing old fades away.
         const item = { id, fact: f.fact, quote: f.quote, source: mid, turn, witnesses, secret: !!f.secret, weight: f.weight === 'minor' ? 'minor' : 'major' };
+        if (f.memory) item.memory = f.memory;
         if (f.kind) item.kind = f.kind;
         (f.certainty === 'stated' ? state.canon : state.uncertain).push(item);
         for (const w of witnesses) {
@@ -682,14 +686,14 @@ export function applyDelta(state, obs, entry) {
     // Found live (19 Nov 2026): the observer names the location on every reply and records background events as minor
     // facts, so only a major fact or a real change of place counts.
     const placeMoved = placeBefore !== null && state.scene.location.established && nameKey(state.scene.location.value) !== placeBefore;
-    const moved = seededRelationship || arr(d.facts).some(f => f.weight === 'major')
+    const moved = seededRelationship || facts.some(f => !f.memory && f.weight === 'major')
         || ['confirmed', 'beliefs', 'relationships', 'statuses', 'cast_changes', 'threads'].some(k => arr(d[k]).length)
         || arr(dir.clues_found).length > 0 || dir.beat === 'complete' || dir.beat === 'advanced' || placeMoved;
     state.meta.quiet = moved ? 0 : (state.meta.quiet ?? 0) + 1;
 
     if (d.summary) state.summaries.recent.push({ text: d.summary, source: mid, i: entry.i, hidden: entry.hidden });
 
-    state.meta.accepted += obs.accepted ?? 0;
+    state.meta.accepted += (obs.accepted ?? 0) - (arr(d.facts).length - facts.length);
     state.meta.rejected += arr(obs.rejected).length;
     for (const r of arr(obs.rejected)) state.meta.rejections.push({ ...r, source: mid });
     if (state.meta.rejections.length > 40) state.meta.rejections.splice(0, state.meta.rejections.length - 40);
@@ -761,6 +765,21 @@ export function applyOp(state, op, entry, chatMids) {
             const fresh = arr(op.value).map((b, n) => sanitiseBeat(b, `b-${tag}-p${op.seq ?? turn}-${n}`));
             const at = state.beats.findIndex(b => b.status === 'queued');
             state.beats.splice(at === -1 ? state.beats.length : at, 0, ...fresh);
+            break;
+        }
+        case 'check-plan': {
+            const updates = new Map(arr(op.value).map(update => [update.id, update]));
+            for (const beat of state.beats) {
+                const update = updates.get(beat.id);
+                if (!update || beat.status !== 'queued') continue;
+                if (update.skip) beat.status = 'skipped';
+                else {
+                    beat.goal = beat.intent = update.goal;
+                    beat.pressure = update.pressure;
+                    beat.type = update.type;
+                    beat.precondition = update.precondition;
+                }
+            }
             break;
         }
         case 'profile': {

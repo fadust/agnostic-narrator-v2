@@ -1,6 +1,6 @@
 // Memory connectors: where the planner reads the story so far when another extension owns memory (settings.memory
 // 'extension'). Each connector says whether its extension is there and returns { text, missing?, source }.
-// Other extensions may register { id, name, available, story, gaps? }. Only gaps() must be synchronous.
+// Other extensions may register { id, name, available, story, gaps?, supportsBefore? }. Only gaps() must be synchronous.
 
 const ctx = () => SillyTavern.getContext();
 
@@ -24,10 +24,11 @@ const baiBaiMissing = h => Array.isArray(h?.coverage?.missingAiFloors) ? h.cover
 registerMemoryProvider({
     id: 'baibai',
     name: 'BaiBai Book',
+    supportsBefore: true,
     available: () => typeof globalThis.STBaiBaiBook?.getHistory === 'function',
-    story() {
-        const h = globalThis.STBaiBaiBook.getHistory({});
-        return { text: String(h?.text ?? ''), missing: baiBaiMissing(h), source: 'BaiBai Book' };
+    story({ before } = {}) {
+        const h = globalThis.STBaiBaiBook.getHistory(Number.isInteger(before) ? { before } : {});
+        return { text: String(h?.text ?? ''), missing: baiBaiMissing(h), source: 'BaiBai Book', before: h?.before };
     },
     gaps: () => baiBaiMissing(globalThis.STBaiBaiBook.getHistory({})),
 });
@@ -69,16 +70,21 @@ function* availableProviders(settings) {
 /**
  * The record from the chosen connector. 'auto' takes the first available one. 'macro' reads {{name}}.
  * @param {{memoryProvider?: string, memoryMacro?: string}} settings
+ * @param {{before?: number}} [options] An exclusive chat index. Providers must support the cutoff and return it.
  */
-export async function memoryStory(settings) {
+export async function memoryStory(settings, options = {}) {
     const choice = settings.memoryProvider || 'auto';
+    const bounded = Number.isInteger(options.before);
     if (choice === 'macro') {
+        if (bounded) return null;
         const name = String(settings.memoryMacro ?? '').replace(/[{}]/g, '').trim();
         const text = name ? macroText(name) : '';
         return text ? { text, source: `{{${name}}}` } : null;
     }
     for (const provider of availableProviders(settings)) {
-        const record = await provider.story();
+        if (bounded && !provider.supportsBefore) continue;
+        const record = await provider.story(options);
+        if (bounded && record?.before !== options.before) continue;
         if (record?.text) return record;
         // Present but nothing summarised yet (BaiBai writes a reply's summary only after the next reply).
         if (record) return { ...record, text: '', empty: true };

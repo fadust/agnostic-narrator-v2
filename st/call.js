@@ -16,7 +16,7 @@ export function makeCall({ getContext, getSettings }) {
         const c = getContext();
         const settings = getSettings();
         // A check call ('tracker-check', 'planner-check') runs on its parent role's profile and temperature.
-        const role = String(module).replace(/-check$/, '');
+        const role = String(module).replace(/(?:-memory)?-check$/, '');
         const profile = settings.profiles?.[role] || settings.profile;
         if (profile) {
             // Streamed (owner, 21 Nov 2026): a slow thinking model sends nothing for a minute without streaming, and the

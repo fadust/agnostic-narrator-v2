@@ -3,13 +3,13 @@
 import { extractJson } from './json.js';
 import { beatText } from './beat.js';
 import { buildLorebook } from './lore.js';
-import { memoryMode, plannerMemory } from './memory.js';
+import { memoryExcerpt, memoryMode, planCheckEvidence, plannerMemory } from './memory.js';
 import { planTrigger, queuedBeatText, validateArc, validateConclusion, validateGenre, validatePlan, validateProfile, validateSpine, validateSpineRewrites } from './planner.js';
 import { arcPrompt, beatCheckPrompt, cleanupPrompt, conclusionPrompt, genrePrompt, observerPrompt, planPrompt, profilePrompt, spineCheckPrompt, spinePrompt, summariserPrompt, trackCheckPrompt, trackerPrompt } from './prompts.js';
 import { applySpineRewrites, emptySpine, findCriterion, flagSpine, needsConclusion, spineIds, spineTrigger } from './spine.js';
 import { activeRevision, castPeople, ensureCast, logOp, playerSettled, rawTextHash, reconcile, replay, scan, storyBasis, visibleText } from './state.js';
 import { aroundQuote, applyTrackCheck, validateCleanup, validateEvidenceCheck, validateObservation, validateTracking } from './validate.js';
-import { arr, hash, roughTokens, str } from './util.js';
+import { arr, clip, hash, roughTokens, str } from './util.js';
 import { planCheckContext, reviewPlan, validatePlanRewrites } from './plancheck.js';
 import { planCheckPrompt } from './prompts.js';
 import { validateAgendas } from './agenda.js';
@@ -90,7 +90,7 @@ export function storyCards(state, chat, narrator, entries, cap = 1800) {
 }
 
 /** Check calls run on their parent role's connection profile, temperature and answer limit, but are logged apart. */
-const ROLE_OF = { 'observer-check': 'observer', 'tracker-check': 'tracker', 'planner-check': 'planner' };
+const ROLE_OF = { 'observer-check': 'observer', 'observer-memory-check': 'observer', 'tracker-check': 'tracker', 'planner-check': 'planner' };
 
 const COOL_MS = 90_000;
 const MEMORY_MS = 5_000;
@@ -168,8 +168,8 @@ export const DEFAULTS = {
  * @property {() => string[]} [loreKeys]
  * @property {() => string[]} [castNames] Titles of the cast cards in the chat. Each stands for the people its profile names (castPeople).
  * @property {() => number} [firstIncluded] Chat index of the oldest message still in the prompt.
- * @property {() => Promise<{text: string, missing?: number[], source?: string}|null>} [memoryStory] The memory extension's
- *   record of the story, for the planner, when settings.memory is 'extension'. missing: chat indices of replies it has
+ * @property {(options?: {before?: number}) => Promise<{text: string, before?: number, missing?: number[], source?: string}|null>} [memoryStory] The memory extension's
+ *   record of the story when settings.memory is 'extension'. missing: chat indices of replies it has
  *   no summary for.
  */
 
@@ -509,6 +509,8 @@ export class Director {
         const epoch = this.epoch;
         if (!this.host.narrator()) return;
         this.sync();
+        let storyMemory;
+        const readStoryMemory = () => storyMemory ??= this.memoryRecord();
         // 1. The observer and the spine tracker read replies side by side. They write different records on the message
         // (obs and track) and neither reads the other's, so they cannot clash. On different connection profiles their
         // calls are in flight together; on one profile the per-profile queue in model() still takes them in turn.
@@ -543,8 +545,8 @@ export class Director {
         if (!this.owns(epoch)) return;
         // 2. Setup and planning rest on the freshest view.
         const steps = {
-            genre: () => this.ensureGenre(), profile: () => this.ensureProfiles(), spine: () => this.ensureSpine(),
-            planner: () => this.maybePlan(), conclusion: () => this.maybeConclude(), summariser: () => this.maybeRollUp(),
+            genre: () => this.ensureGenre(), profile: () => this.ensureProfiles(), spine: () => this.ensureSpine(false, readStoryMemory),
+            planner: () => this.maybePlan(null, readStoryMemory), conclusion: () => this.maybeConclude(), summariser: () => this.maybeRollUp(),
             cleanup: () => this.maybeCleanUp(),
         };
         for (const [name, step] of Object.entries(steps)) {
@@ -581,6 +583,8 @@ export class Director {
     async observe(entry) {
         const epoch = this.epoch;
         const before = this.view({ upto: entry.i });
+        const preceding = this.host.chat()[entry.i - 1];
+        const memoryBasis = preceding && memoryMode(this.cfg().memory) === 'extension' ? this.basis(preceding) : null;
         // Card people the player removed or renamed away stay out, even if a re-profile brought the old name back.
         for (const n of castPeople(before, this.host.castNames?.() ?? [])) {
             if (!before.meta.removedCast.includes(n) && !(n in before.meta.renamedCast)) ensureCast(before, n);
@@ -590,19 +594,23 @@ export class Director {
         const offered = entry.cue;
         const beat = offered?.beat ? before.beats.find(b => b.id === offered.beat && b.status === 'queued') : null;
         const playerBasis = { mid: player?.narrator_id ?? null, revision: player ? activeRevision(player, this.host.narrator()) : null };
-        const messages = observerPrompt({ state: before, reply: entry.text, playerMessage, offered: beat ? offered : null });
         const rec = entry.m.extra.narrator;
         const stillCurrent = () => {
             const current = this.host.chat();
             const index = current.indexOf(entry.m);
             if (index < 0 || activeRevision(entry.m, this.host.narrator()) !== entry.revision
-                || hash(visibleText(entry.m, this.host.narrator())) !== entry.hash) return false;
+                || hash(visibleText(entry.m, this.host.narrator())) !== entry.hash
+                || (memoryBasis && (current[index - 1] !== preceding || !this.basisCurrent(memoryBasis)))) return false;
             for (let i = index - 1; i >= 0; i--) if (current[i].is_user) {
                 return current[i] === player && activeRevision(player, this.host.narrator()) === playerBasis.revision;
             }
             return !player;
         };
         try {
+            const memory = memoryBasis ? await this.priorMemory(entry.i, entry.text) : null;
+            if (!this.owns(epoch)) return false;
+            if (!stillCurrent()) { this.again = true; return false; }
+            const messages = observerPrompt({ state: before, reply: entry.text, playerMessage, offered: beat ? offered : null, memory });
             const raw = await this.model('observer', messages);
             if (!this.owns(epoch)) return false;
             if (!stillCurrent()) { this.again = true; return false; } // the reply changed while we worked: discard
@@ -616,9 +624,12 @@ export class Director {
                 aliases: Object.fromEntries(Object.entries(before.cast).flatMap(([n, c]) => arr(c.aliases).map(a => [a, n]))),
                 uncertainIds: before.uncertain.map(u => u.id), threadIds: before.threads.map(t => t.id),
                 clueIds: beat ? offered.clues : [], beatOffered: !!beat, beatGoalSource: beat?.goal_source,
-                player: before.meta.player, playerMessage,
-                known: [playerMessage, ...before.canon.map(f => f.fact), ...before.uncertain.map(f => f.fact)].join('\n'),
+                player: before.meta.player, playerMessage, memory,
+                known: [playerMessage, ...before.canon.map(f => f.fact), ...before.uncertain.map(f => f.fact), memory?.text].join('\n'),
             });
+            await this.checkRecalledFacts(v, memory, before, entry.text);
+            if (!this.owns(epoch)) return false;
+            if (!stillCurrent()) { this.again = true; return false; }
             const direction = v.delta.direction;
             if (direction.proof) {
                 const { proof } = direction;
@@ -638,7 +649,8 @@ export class Director {
                 }
             }
             this.recovered('observer');
-            rec.obs = { hash: entry.hash, revision: entry.revision, player: playerBasis, delta: v.delta, accepted: v.accepted, rejected: slimRejected(v.rejected), beat: beat?.id ?? null, at: Date.now(), strip: [...(this.host.narrator()?.strip ?? [])] };
+            rec.obs = { hash: entry.hash, revision: entry.revision, player: playerBasis, delta: v.delta, accepted: v.accepted, rejected: slimRejected(v.rejected), beat: beat?.id ?? null, at: Date.now(), strip: [...(this.host.narrator()?.strip ?? [])],
+                ...(v.delta.facts.some(f => f.memory) ? { memoryBasis } : {}) };
             delete rec.err;
             this.save();
             return true;
@@ -740,14 +752,17 @@ export class Director {
             && activeRevision(e.m, this.host.narrator()) === e.revision
             && hash(visibleText(e.m, this.host.narrator())) === e.hash);
         try {
-            const raw = await this.model('tracker', trackerPrompt({ state: before, exchanges }));
+            const memory = await this.priorMemory(batch[0].i, exchanges.map(e => e.reply).join('\n'));
+            if (!this.owns(epoch)) return false;
+            if (!stillCurrent()) { this.again = true; return false; }
+            const raw = await this.model('tracker', trackerPrompt({ state: before, exchanges, memory }));
             if (!this.owns(epoch)) return false;
             if (!stillCurrent()) { this.again = true; return false; }
             const parsed = extractJson(raw);
             if (!parsed.ok) throw new Error(`tracker: ${parsed.error}`);
             const ids = spineIds(before);
             const texts = batch.map(e => e.text);
-            const v = await this.checkMarks(validateTracking(parsed.value, { texts, spine: ids, names: Object.keys(before.cast), player: before.meta.player, settledIds: playerSettled(before).map(s => s.id) }), texts, before, ids);
+            const v = await this.checkMarks(validateTracking(parsed.value, { texts, memory, spine: ids, names: Object.keys(before.cast), player: before.meta.player, settledIds: playerSettled(before).map(s => s.id) }), texts, before, ids, memory);
             if (!this.owns(epoch)) return false;
             if (!stillCurrent()) { this.again = true; return false; }
             // A batch that fitted lets the next one grow back by a reply, up to the usual size (audit map, 22 Nov 2026).
@@ -774,14 +789,35 @@ export class Director {
         }
     }
 
+    async checkRecalledFacts(v, memory, state, reply) {
+        const claims = v.delta.facts.filter(f => f.memory);
+        if (!claims.length) return;
+        const items = claims.map((f, i) => ({
+            id: `f${i + 1}`, mark: 'fact', criterion: f.fact, quote: f.quote, memory: f.memory,
+            context: aroundQuote(memory.text, f.quote),
+        }));
+        const current = [...state.canon.filter(f => !f.retired && !f.memory).slice(-10).map(f => f.fact),
+            clip(reply, 1000)].filter(Boolean).join('\n');
+        const verdicts = await this.checkEvidence('observer-memory-check', trackCheckPrompt({ items, current }), items.map(i => i.id));
+        const rejected = new Set();
+        claims.forEach((fact, index) => {
+            const verdict = verdicts[items[index].id];
+            if (verdict?.verdict === 'confirm') return;
+            rejected.add(fact);
+            v.rejected.push({ kind: 'facts', item: fact, reason: `memory check: ${verdict?.reason ?? 'no confirming verdict'}` });
+        });
+        v.accepted -= rejected.size;
+        v.delta.facts = v.delta.facts.filter(f => !rejected.has(f));
+    }
+
     /** Check the quoted spine claims together, independently of the initial tracker answer. */
-    async checkMarks(v, texts, state, ids) {
-        const context = item => aroundQuote(texts[item.exchange - 1], item.quote);
+    async checkMarks(v, texts, state, ids, memory) {
+        const context = item => aroundQuote(item.memory ? memory?.text : texts[item.exchange - 1], item.quote);
         const items = v.delta.marks.filter(m => !m.settled).map(m => {
             const c = findCriterion(state.spine, m.id)?.criterion;
             return {
                 id: m.id, mark: m.mark, criterion: c?.text ?? '', role: c?.role ?? '', reason: m.reason, quote: m.quote,
-                context: context(m), speaker: m.speaker ?? '',
+                context: context(m), speaker: m.speaker ?? '', memory: m.memory,
                 ...(m.also ? { also: { ...m.also, context: context(m.also) } } : {}),
             };
         });
@@ -793,7 +829,8 @@ export class Director {
             });
         }
         if (!items.length) return v;
-        const verdicts = await this.checkEvidence('tracker-check', trackCheckPrompt({ items }), items.map(i => i.id));
+        const current = items.some(i => i.memory) ? texts.map(text => clip(text, 600)).join('\n') : '';
+        const verdicts = await this.checkEvidence('tracker-check', trackCheckPrompt({ items, current }), items.map(i => i.id));
         return applyTrackCheck(v, verdicts, ids.milestoneCriteria);
     }
 
@@ -975,7 +1012,59 @@ export class Director {
         }
     }
 
-    async maybePlan(force = null) {
+    reviewPlanDraft(draft, state, loreKeys, onFail, evidence, wholeQueue = false) {
+        const ctx = planCheckContext(state, loreKeys);
+        return reviewPlan(draft, ctx,
+            (flags, plan) => this.json('planner-check', planCheckPrompt({ beats: plan.beats, flags, player: ctx.player, genre: ctx.genre, names: ctx.names, evidence, wholeQueue }), raw => validatePlanRewrites(raw, flags, plan, ctx, wholeQueue ? evidence : undefined)),
+            onFail, wholeQueue);
+    }
+
+    /** Recheck the existing queue without invoking the planner or replacing beat IDs. */
+    async checkQueuedPlan() {
+        const epoch = this.epoch;
+        const anchor = this.latest();
+        const state = this.readView();
+        const beats = state.beats.filter(b => b.status === 'queued');
+        if (!anchor || !beats.length) return { status: 'empty' };
+
+        const basis = this.basis(anchor);
+        const anchorHash = hash(anchor.mes);
+        const stillCurrent = () => this.owns(epoch) && this.latest() === anchor && this.basisCurrent(basis)
+            && JSON.stringify(this.readView().beats.filter(b => b.status === 'queued')) === JSON.stringify(beats);
+        const cfg = this.cfg();
+        const provided = await this.memoryRecord(cfg);
+        if (!stillCurrent()) return { status: 'changed' };
+        const memory = plannerMemory({ mode: cfg.memory, state, entries: this.readings().entries, provided });
+        const evidence = planCheckEvidence(state, beats, memory);
+        let failed = false;
+        const checked = await this.reviewPlanDraft({ beats }, state, this.host.loreKeys?.() ?? [], e => {
+            failed = true;
+            if (this.owns(epoch)) this.fail('planner-check', e);
+        }, evidence, true);
+        if (!stillCurrent()) return { status: 'changed' };
+        if (failed) return { status: 'failed' };
+
+        const retained = new Map(checked.plan.beats.map(b => [b.id, b]));
+        const updates = beats.flatMap(b => {
+            const revised = retained.get(b.id);
+            if (!revised) return [{ id: b.id, skip: true }];
+            const { goal, pressure, type, precondition } = revised;
+            if (goal === b.goal && pressure === b.pressure && type === b.type && precondition === b.precondition) return [];
+            return [{ id: b.id, goal, pressure, type, precondition }];
+        });
+        if (updates.length) {
+            if (!this.logOnAnchor(epoch, anchor, anchorHash, { kind: 'check-plan', by: 'director', value: updates, basis })) return { status: 'changed' };
+            this.save();
+            this.host.changed?.('plan-checked');
+        }
+        this.recovered('planner-check');
+        return {
+            status: 'checked', total: beats.length, updated: updates.length - checked.dropped.length, skipped: checked.dropped.length,
+            remaining: checked.remaining, memorySource: memory.source, memoryUnavailable: memory.unavailable,
+        };
+    }
+
+    async maybePlan(force = null, readStoryMemory = () => this.memoryRecord()) {
         const epoch = this.epoch;
         const cfg = this.cfg();
         let state = this.view();
@@ -988,7 +1077,7 @@ export class Director {
         const anchorHash = hash(anchor.mes);
         const basis = this.basis(anchor);
         const loreKeys = this.host.loreKeys?.() ?? [];
-        const provided = await this.memoryRecord(cfg);
+        const provided = await readStoryMemory();
         if (!this.owns(epoch)) return false;
         const memory = (st) => plannerMemory({ mode: cfg.memory, state: st, entries: this.readings().entries, provided });
         let wrote = false;
@@ -1003,7 +1092,7 @@ export class Director {
         // the spine step tries again later.
         if (!state.spine) {
             try {
-                const changed = await this.ensureSpine();
+                const changed = await this.ensureSpine(false, () => provided);
                 if (!this.owns(epoch)) return false;
                 if (changed) { wrote = true; state = this.view(); }
             } catch (e) {
@@ -1017,10 +1106,9 @@ export class Director {
         if (!this.owns(epoch)) return false;
         // Plan check: code flags, and one cheap rewrite call only when something is flagged. Runs here, in the background
         // pass, never in the narrator's path. Beats that still script the player or fight the genre are dropped.
-        const ctx = planCheckContext(state, loreKeys);
-        const checked = await reviewPlan(drafted, ctx,
-            (flags, draft) => this.json('planner-check', planCheckPrompt({ beats: draft.beats, flags, player: ctx.player, genre: ctx.genre, names: ctx.names }), raw => validatePlanRewrites(raw, flags, draft, ctx)),
-            e => { if (this.owns(epoch)) this.fail('planner-check', e); });
+        const evidence = planCheckEvidence(state, drafted.beats, memory(state));
+        const checked = await this.reviewPlanDraft(drafted, state, loreKeys,
+            e => { if (this.owns(epoch)) this.fail('planner-check', e); }, evidence);
         if (!this.owns(epoch)) return false;
         // Nothing left: log nothing (the old queue stays as it was) and let the planner rest before it tries again,
         // so an empty queue cannot set off one planner call per pass.
@@ -1039,21 +1127,27 @@ export class Director {
      * The memory extension's record, when it owns memory. Missing, failing or slower than MEMORY_MS: null, and the
      * planner works from the last replies' summaries and the other records.
      */
-    async memoryRecord(cfg = this.cfg()) {
+    async memoryRecord(cfg = this.cfg(), options) {
         if (memoryMode(cfg.memory) !== 'extension' || !this.host.memoryStory) return null;
         const epoch = this.epoch;
         let timer;
         try {
             const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('memory extension too slow')), Number(cfg.memoryWait) || MEMORY_MS); });
-            const r = await Promise.race([Promise.resolve().then(() => this.owns(epoch) ? this.host.memoryStory() : null), late]);
+            const r = await Promise.race([Promise.resolve().then(() => this.owns(epoch) ? this.host.memoryStory(options) : null), late]);
             if (!this.owns(epoch)) return null;
             return r && typeof r === 'object' ? r : (typeof r === 'string' ? { text: r } : null);
         } catch (e) {
-            if (this.owns(epoch)) console.warn('[Narrator Director] memory extension unavailable; planning from the latest replies', e);
+            if (this.owns(epoch)) console.warn('[Narrator Director] memory extension unavailable; using the local story record', e);
             return null;
         } finally {
             clearTimeout(timer);
         }
+    }
+
+    async priorMemory(before, query) {
+        const record = await this.memoryRecord(this.cfg(), { before });
+        if (record?.before !== before || !record.text) return null;
+        return { source: str(record.source, 60), before, text: memoryExcerpt(record.text, query, 3000) };
     }
 
     /**
@@ -1076,11 +1170,11 @@ export class Director {
         if (!this.logSetup(epoch, { kind: 'edit', by: 'player', path: 'arc', value, basis })) return false;
         const saved = ['arc'];
         try {
-            if (await this.ensureSpine(true)) saved.push('spine');
+            if (await this.ensureSpine(true, () => provided)) saved.push('spine');
         } catch (e) { if (this.owns(epoch)) this.fail('spine', e); }
         if (!this.owns(epoch)) return false;
         try {
-            if (await this.maybePlan('the player redrafted the arc: replace every queued opening with a fresh plan from where the story stands')) saved.push('plan');
+            if (await this.maybePlan('the player redrafted the arc: replace every queued opening with a fresh plan from where the story stands', () => provided)) saved.push('plan');
         } catch (e) { if (this.owns(epoch)) this.fail('planner', e); }
         return this.owns(epoch) && saved;
     }
@@ -1089,7 +1183,7 @@ export class Director {
      * The spine is drafted once, after the arc, from the same story material as the genre profile.
      * `force` redrafts it (from /director spine), replacing the current one as a player edit.
      */
-    async ensureSpine(force = false) {
+    async ensureSpine(force = false, readStoryMemory = () => this.memoryRecord()) {
         const epoch = this.epoch;
         if (!this.host.material) return false;
         const state = this.view();
@@ -1097,9 +1191,17 @@ export class Director {
         const basis = this.basis();
         const material = await this.host.material();
         if (!this.owns(epoch) || !str(material, 50)) return false;
+        let evidence = [];
+        if (force || state.meta.turn > 0) {
+            const provided = await readStoryMemory();
+            if (!this.owns(epoch) || !this.basisCurrent(basis)) return false;
+            const memory = plannerMemory({ mode: this.cfg().memory, state, entries: this.readings().entries, provided });
+            evidence = planCheckEvidence(state, state.beats.filter(b => b.status === 'queued'), memory)
+                .filter(([title]) => title !== 'Settled by the player');
+        }
         // Agendas (M1) ride in the same call, rooted in the same material; validated against the cast and the material.
         let agendas = [];
-        let value = await this.json('planner', spinePrompt({ material, genre: state.genre, premise: state.premise, arc: state.arc, player: state.meta.player, cast: spineCast(state), settled: playerSettled(state).map(s => s.text), story: force ? [state.summaries.rolled, ...state.summaries.recent.slice(-12).map(s => s.text)].filter(Boolean).join('\n') : '' }), (raw) => {
+        let value = await this.json('planner', spinePrompt({ material, genre: state.genre, premise: state.premise, arc: state.arc, player: state.meta.player, cast: spineCast(state), settled: playerSettled(state).map(s => s.text), evidence }), (raw) => {
             const v = validateSpine(raw);
             if (v.ok) agendas = validateAgendas(raw.agendas, state, material);
             return v;
@@ -1181,7 +1283,7 @@ export class Director {
         const above = Number(cfg.cleanAbove ?? DEFAULTS.cleanAbove);
         if (!force && !(every > 0) && !(above > 0)) return false;
         const state = this.view({ includeProvisional: false });
-        const live = state.canon.filter(f => !f.retired);
+        const live = state.canon.filter(f => !f.retired && !f.memory);
         const timed = every > 0 && state.meta.turn - (state.meta.lastCleanTurn ?? 0) >= every && live.length >= 8;
         // Real growth, not one new fact: a clean-up that could not get below the limit would otherwise run every turn.
         // Only facts a clean-up may remove count toward running early: major facts are never deleted, so a count held up by

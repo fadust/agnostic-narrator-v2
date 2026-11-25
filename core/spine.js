@@ -209,10 +209,14 @@ export function applySpineDelta(state, sd, entry, key, tracked = true) {
         // A lasting state shown in one exchange is partly met; a second showing in another reply completes it.
         if (m.mark === 'met' && m.partial) {
             const first = hit.criterion.partial;
-            if (!first || first.source === entry.mid) { hit.criterion.partial = { quote: str(m.quote), source: entry.mid, turn, ...(speaker ? { speaker } : {}) }; continue; }
+            if (m.memory && first) continue;
+            if (!first || first.source === entry.mid) {
+                hit.criterion.partial = { quote: str(m.quote), source: entry.mid, turn, ...(speaker ? { speaker } : {}), ...(m.memory ? { memory: m.memory } : {}) };
+                continue;
+            }
         }
-        Object.assign(hit.criterion, { mark: m.mark, by: 'story', quote: str(m.quote), turn, source: entry.mid, ...(m.reason ? { reason: str(m.reason, 200) } : {}), ...(speaker ? { speaker } : {}) });
-        if (m.mark === 'met') built = true;
+        Object.assign(hit.criterion, { mark: m.mark, by: 'story', quote: str(m.quote), turn, source: entry.mid, ...(m.reason ? { reason: str(m.reason, 200) } : {}), ...(speaker ? { speaker } : {}), ...(m.memory ? { memory: m.memory } : {}) });
+        if (m.mark === 'met' && !m.memory) built = true;
     }
     for (const h of arr(sd.happened)) {
         const ms = arr(sp.milestones).find(x => x.id === h.milestone && x.status !== 'concluded');
@@ -306,7 +310,7 @@ export function mergeSpineEdit(current, value) {
     if (!isObj(value)) return current;
     const next = { ...emptySpine(), ...structuredClone(value) };
     if (!current) return next;
-    const STORY_KEYS = ['mark', 'by', 'quote', 'turn', 'source', 'alternative', 'reason', 'partial', 'speaker'];
+    const STORY_KEYS = ['mark', 'by', 'quote', 'turn', 'source', 'alternative', 'reason', 'partial', 'speaker', 'memory'];
     const keepMarks = (item, prev) => {
         if (!prev) return;
         for (const c of arr(item.criteria)) {
@@ -355,6 +359,7 @@ export function applySpineOp(state, op, entry) {
         case 'spine-mark': {
             const hit = findCriterion(state.spine, op.id);
             if (hit && MARKS.includes(op.mark)) {
+                delete hit.criterion.memory;
                 if (op.mark === 'open') { hit.criterion.mark = 'open'; for (const k of ['by', 'quote', 'turn', 'source', 'reason', 'partial', 'speaker']) delete hit.criterion[k]; }
                 else { delete hit.criterion.reason; delete hit.criterion.speaker; Object.assign(hit.criterion, { mark: op.mark, by: 'player', quote: '', turn, source: entry.mid }); }
             }

@@ -22,6 +22,7 @@ test('direction prose can begin with an action name without dispatching it', () 
 
 test('the documented argument forms select their intended action', () => {
     const forms = [
+        ['checkplan', 'checkplan', ''],
         ['Scene: location=the harbor; mood=quiet', 'scene', 'location=the harbor; mood=quiet'],
         ['beats: one; two', 'beats', 'one; two'],
         ['rewrite: let the crew decide', 'rewrite', 'let the crew decide'],

@@ -219,6 +219,43 @@ await check('the planner ran after the first reply; the player profile was deriv
     assert(s.cast.Rowan?.pc && s.cast.Rowan.stats, 'no PC profile');
 });
 
+await check('/director checkplan reads the selected external memory with no planner or story call', async () => {
+    const before = await view();
+    const messages = await chatLen();
+    const memorySettings = await ev(() => {
+        const settings = SillyTavern.getContext().extensionSettings.narrator_director;
+        const previous = { memory: settings.memory, memoryProvider: settings.memoryProvider };
+        settings.memory = 'extension';
+        window.STBaiBaiBook = { getHistory: () => ({ text: 'BaiBai fixture: the watch closed the north gate.' }) };
+        window.narratorDirector.registerMemoryProvider({
+            id: 'fixture-notebook', name: 'Fixture Notebook',
+            story: () => ({ text: 'Notebook fixture: the watch closed the south gate.', source: 'Fixture Notebook' }),
+        });
+        return previous;
+    });
+    try {
+        for (const [provider, source, record] of [
+            ['baibai', 'BaiBai Book', 'the watch closed the north gate'],
+            ['fixture-notebook', 'Fixture Notebook', 'the watch closed the south gate'],
+        ]) {
+            await ev(id => { SillyTavern.getContext().extensionSettings.narrator_director.memoryProvider = id; }, provider);
+            const from = mock.log.length;
+            const result = await slash('/director checkplan');
+            assert(result === `Checked 2 queued beats. No changes needed. Used ${source}.`, result);
+            const calls = mock.log.slice(from);
+            assert(calls.length === 1 && calls[0].kind === 'plan-check', 'the command made a call other than the plan check');
+            assert(flat(calls[0].messages).includes(record), 'the checker did not receive the selected record');
+        }
+    } finally {
+        await ev(previous => {
+            Object.assign(SillyTavern.getContext().extensionSettings.narrator_director, previous);
+            delete window.STBaiBaiBook;
+        }, memorySettings);
+    }
+    assert(await chatLen() === messages, 'the command created a message');
+    assert(JSON.stringify((await view()).beats) === JSON.stringify(before.beats), 'an unmodified check rewrote the queue');
+});
+
 mock.control.narration = 'Mira smiles and hands you the bucket at the Greywell Square. Old Tam spits and looks away from the water. A grey film clings to the rim of the bucket.';
 mock.control.observerBeat = 'complete';
 await send('I try to outrun Mira to the well.');

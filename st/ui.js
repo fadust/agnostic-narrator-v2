@@ -89,9 +89,10 @@ export function mountUi(api) {
             c.alternative ? '<b>alternative route</b>' : '',
             c.mark !== 'open' && c.by ? (c.by === 'player' ? 'by you' : 'by the story') : '',
             c.turn !== undefined && c.mark !== 'open' ? `turn ${c.turn}` : '',
+            c.memory ? `earlier memory from ${h(c.memory.source)}` : '',
             c.quote ? `${c.speaker ? `${h(c.speaker)}: ` : ''}“${h(c.quote)}”` : '',
             c.reason ? `why: ${h(c.reason)}` : '',
-            c.mark === 'open' && c.partial ? `partly shown once${c.partial.quote ? `: “${h(c.partial.quote)}”` : ''}; a lasting state needs a second reply to show it` : '',
+            c.mark === 'open' && c.partial ? `partly shown once${c.partial.memory ? ` in ${h(c.partial.memory.source)}` : ''}${c.partial.quote ? `: “${h(c.partial.quote)}”` : ''}; a lasting state needs a second reply to show it` : '',
             saved ? '' : 'new: save the spine before marking it',
         ].filter(Boolean).join(' · ');
         return `<div class="nd-sp-crit" data-id="${h(c.id ?? '')}">
@@ -226,7 +227,7 @@ export function mountUi(api) {
 
             <h4>Memory and lore</h4>
             ${sel('nd-memory', 'Who keeps the story\'s memory', s.memory, [['director', 'The director'], ['extension', 'Another extension'], ['off', 'Nobody']], 'The director: it summarises each reply and sends the story so far and chapters to the narrator. Another extension (BaiBai Book, Summarize): that extension feeds the narrator the story so far; the director adds only its one-line summaries of the last 2 turns, sends no chapters, and plans from that extension\'s record. Nobody: no story memory is sent. Facts, scene, cast, threads, the spine and lore are kept in every mode.')}
-            ${sel('nd-memory-provider', 'Read the memory from', s.memoryProvider, api.providerOptions(), 'With "Another extension". Automatic takes the first one present: BaiBai Book, then Summarize. If it is missing or slow, the planner works from the last replies and the other records.')}
+            ${sel('nd-memory-provider', 'Read the memory from', s.memoryProvider, api.providerOptions(), 'With "Another extension". Automatic prefers BaiBai Book, then Summarize, followed by registered providers. Planning, spine drafts and Check Plan use this source. Earlier memory can help reply and spine tracking when the provider supports a message cutoff.')}
             ${text('nd-memory-macro', 'Macro to read', s.memoryMacro, 'With "A macro": its name without braces, for example bbsHistory.')}
             ${text('nd-strip', 'Tags to remove before reading', s.stripTags, 'Other extensions\' tags, separated by commas. Each is removed whole, content included, before the director reads a reply; the message itself is not changed. Records made before you change this still count.')}
             ${num('rollEvery', 'Roll up summaries every N', 'Counted over summaries whose messages have left the prompt. Only when the director keeps the memory.')}
@@ -491,12 +492,12 @@ export function mountUi(api) {
             const lore = (e) => item(e.text, '', `<b>${h(e.keys.join(', '))}</b> · ${h(e.kind)} · mentioned in ${e.mentions} repl${e.mentions === 1 ? 'y' : 'ies'}${e.supersedes ? ` · replaces authored lore on ${h(e.supersedes)}` : ''}${e.history.length ? `<br>Earlier: ${h(e.history.map(x => x.text).join(' | '))}` : ''}`);
             const inView = new Set(factsInView(s).map(f => f.id));
             const weight = (f) => (f.retired ? '<b>retired by the clean-up</b> · ' : `${f.weight === 'minor' ? 'minor' : 'major'}${f.weight === 'minor' && !inView.has(f.id) ? ', faded: no longer shown to the models' : ''}${f.merged ? ` · merged from ${f.merged.length} facts` : ''} · `);
-            const seen = (f) => `${weight(f)}turn ${f.turn ?? '?'} · seen by ${f.witnesses?.length ? h(f.witnesses.join(', ')) : 'nobody else'}${f.secret ? ' · <b class="nd-secret">secret: anyone else in the scene is played as not knowing</b>' : ''}<br>“${h(f.quote || 'no quote')}”`;
+            const seen = (f) => `${weight(f)}${f.memory ? `earlier memory from ${h(f.memory.source)} · recorded at turn ${f.turn ?? '?'}` : `turn ${f.turn ?? '?'} · seen by ${f.witnesses?.length ? h(f.witnesses.join(', ')) : 'nobody else'}`}${f.secret ? ' · <b class="nd-secret">secret: anyone else in the scene is played as not knowing</b>' : ''}<br>“${h(f.quote || 'no quote')}”`;
             // The icon shows the state (lit = secret); clicking it switches.
             const secretIcon = (f) => iconButton('fa-solid fa-user-secret', f.secret ? 'Make public' : 'Mark secret',
                 `data-act="toggle-secret" data-id="${h(f.id)}" aria-pressed="${!!f.secret}"`, f.secret ? 'nd-on' : '');
-            const source = mid => mid ? button('source', 'Source', `data-mid="${h(mid)}"`) : '';
-            const fact = (f) => item(f.fact, secretIcon(f) + button('retcon', 'Undo', `data-id="${h(f.id)}"`) + source(f.source), seen(f));
+            const source = (mid, label = 'Source') => mid ? button('source', label, `data-mid="${h(mid)}"`) : '';
+            const fact = (f) => item(f.fact, secretIcon(f) + button('retcon', 'Undo', `data-id="${h(f.id)}"`) + source(f.source, f.memory ? 'Recorded at' : 'Source'), seen(f));
             const hint = (f) => item(f.fact, button('confirm-fact', 'It is true', `data-id="${h(f.id)}"`) + button('drop-fact', 'Remove', `data-id="${h(f.id)}"`), f.offscreen ? 'planned off-screen; not narrated yet' : seen(f));
             const who = (n) => `${h(n)}${s.cast[n]?.pc ? ' <small>you</small>' : s.cast[n]?.main ? ' <small><i class="fa-solid fa-user-lock"></i> main cast</small>' : ''}`;
             // World first, then one group per cast member the facts name.

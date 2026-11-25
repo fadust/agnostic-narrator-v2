@@ -249,6 +249,75 @@ test('W3 in the director: saving a clean plan clears the previous warning withou
     assert.equal(director.failing['planner-check'], undefined);
 });
 
+test('checking the queue uses external memory and saves only grounded corrections under the existing beat IDs', async () => {
+    const chat = [user('I wait in the hallway.'), narr('The latest prose does not describe the earlier fire.')];
+    const { director, host, state } = makeHost(chat, { settings: { memory: 'extension' } });
+    director.sync();
+    logOp(chat[0], { at: 1, kind: 'plan', by: 'director', reason: 'initial plan', value: { beats: [
+        beat('The guard opens the gate'),
+        beat('The pilot brings the signed ledger to the mill', 'The pilot carries the signed ledger toward the mill', {
+            when: { after: 1 }, clues: [{ text: 'a damaged seal' }],
+        }),
+        beat('Rowan burns the ledger'),
+        beat('The ferry bell rings'),
+    ] } });
+    const seeded = director.view().beats;
+    seeded[0].status = 'complete';
+    seeded[1].progress = 2;
+    seeded[1].clues[0].found = true;
+    logOp(chat[0], { at: 2, kind: 'edit', by: 'player', path: 'beats', value: seeded });
+    const before = director.view();
+    const fact = 'The mill burned down last winter. The pilot keeps the signed ledger in the harbor office.';
+    let memoryReads = 0;
+    host.memoryStory = () => {
+        memoryReads++;
+        return { source: 'BaiBai Book', text: [fact, ...Array(450).fill('Rain fell on the far meadow. The shepherd gathered the sheep.')].join('\n') };
+    };
+    host.call = async (module, messages) => {
+        state.calls.push({ module, messages });
+        return JSON.stringify({ rewrites: [
+            { id: 'b1', goal: 'The pilot brings the signed ledger to the harbor office', pressure: 'The pilot carries the signed ledger to the harbor office', evidence: fact },
+            { id: 'b3', goal: 'The ferry bell breaks', pressure: 'The ferry bell lies in pieces', evidence: 'The bell was broken by four raiders.' },
+        ] });
+    };
+    const checked = await director.exclusive(() => director.checkQueuedPlan());
+    assert.deepEqual(checked, { status: 'checked', total: 3, updated: 1, skipped: 1, remaining: 0, memorySource: 'BaiBai Book', memoryUnavailable: false });
+    assert.equal(memoryReads, 1);
+    assert.deepEqual(state.calls.map(c => c.module), ['planner-check']);
+    const prompt = state.calls[0].messages[1].content;
+    assert.match(prompt, /Earlier story memory \(BaiBai Book\)/);
+    assert.ok(prompt.includes(fact));
+    assert.ok(!prompt.includes('The latest prose does not describe'));
+    assert.ok(!prompt.includes('The guard opens the gate'));
+    const after = director.view();
+    assert.deepEqual(after.beats.map(b => b.id), before.beats.map(b => b.id));
+    assert.equal(after.beats[1].goal, 'The pilot brings the signed ledger to the harbor office');
+    assert.equal(after.beats[1].progress, 2);
+    assert.equal(after.beats[1].when.after, before.beats[0].id);
+    assert.deepEqual(after.beats[1].clues, before.beats[1].clues);
+    assert.equal(after.beats[2].status, 'skipped');
+    assert.deepEqual(after.beats[3], before.beats[3]);
+    assert.deepEqual(after.beats[0], before.beats[0]);
+    assert.equal(after.meta.lastPlanTurn, before.meta.lastPlanTurn);
+    assert.equal(after.meta.planReason, before.meta.planReason);
+    assert.equal(chat.length, 2);
+    assert.equal(chat[1].extra.narrator.ops[0].kind, 'check-plan');
+    assert.deepEqual(makeHost(structuredClone(chat)).director.view().beats, after.beats);
+});
+
+test('checking an empty queue or receiving no usable answer leaves the saved queue untouched', async () => {
+    const chat = [user('I wait in the hallway.')];
+    const { director, host, state } = makeHost(chat);
+    director.sync();
+    assert.deepEqual(await director.exclusive(() => director.checkQueuedPlan()), { status: 'empty' });
+    assert.equal(state.calls.length, 0);
+    logOp(chat[0], { kind: 'beats', by: 'player', value: [beat('Rowan burns the ledger')] });
+    const original = structuredClone(chat);
+    host.call = async () => 'unusable answer';
+    assert.deepEqual(await director.exclusive(() => director.checkQueuedPlan()), { status: 'failed' });
+    assert.deepEqual(chat, original);
+});
+
 test('scripts the player anywhere in the text, and when his body or clothes are changed (live, 18 Nov 2026)', async () => {
     const { scriptsPlayer: s } = await import('../../core/plancheck.js');
     const P = 'Max Brenner';

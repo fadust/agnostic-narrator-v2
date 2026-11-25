@@ -12,6 +12,14 @@ import { arr, isBlank, isObj, nameKey, similarity, str } from './util.js';
 
 const PLAYER_ALIASES = /^(the )?(player|player character|user|pc|protagonist|you|\{\{user\}\})$/;
 
+/** Memory evidence is a copied passage from the earlier record supplied to this call. */
+function memoryEvidence(quote, memory) {
+    const passage = normalise(quote);
+    if (!memory?.text || !Number.isInteger(memory.before) || passage.length < 8
+        || !` ${normalise(memory.text)} `.includes(` ${passage} `)) return null;
+    return { source: str(memory.source, 60) || 'External memory', before: memory.before };
+}
+
 /** An existing relationship needs a source quote. Omitted fields leave the record alone. */
 export function validatePriorRelationship(raw, text) {
     if (!isObj(raw)) return null;
@@ -196,9 +204,10 @@ export function validateObservation(raw, ctx) {
     if (Array.isArray(raw.facts)) {
         const score = (f) => (isObj(f) && (FACT_KIND_WEIGHT[f.kind] ?? f.weight) === 'major' ? 1 : 0);
         factOrder = new Map(raw.facts.map((f, n) => [f, n]));
-        raw = { ...raw, facts: raw.facts.map((f, n) => [f, n]).sort((a, b) => score(b[0]) - score(a[0]) || a[1] - b[1]).map(([f]) => f) };
+        raw = { ...raw, facts: raw.facts.map((f, n) => [f, n]).sort((a, b) =>
+            Number(a[0]?.source === 'memory') - Number(b[0]?.source === 'memory') || score(b[0]) - score(a[0]) || a[1] - b[1]).map(([f]) => f) };
     }
-    each('facts', CAPS.facts, (it) => {
+    each('facts', CAPS.facts, (it, original) => {
         const fact = str(it.fact, CAPS.fact);
         if (!fact) return 'empty fact';
         // The observer names the kind; code decides the weight. Gestures and scenery are not facts.
@@ -207,13 +216,18 @@ export function validateObservation(raw, ctx) {
         if (kw === 'dropped') return `not a fact: ${kind}`;
         // Unknown or missing kind keeps the fact as minor; a legacy "weight" counts only when no kind was given.
         const weight = kw ?? (!kind && it.weight === 'major' ? 'major' : 'minor');
-        if (!quoted(it.quote)) return 'quote not in the reply';
+        const recalled = original.source === 'memory';
+        const quote = str(recalled ? original.quote : it.quote);
+        const memory = recalled ? memoryEvidence(quote, ctx.memory) : null;
+        if (recalled ? !memory : !quoted(it.quote)) return recalled ? 'quote not in the earlier memory' : 'quote not in the reply';
         if (arr(ctx.tombstones).some(t => similarity(t.fact, fact) >= 0.7)) return 'retconned fact';
         if (delta.facts.some(f => similarity(f.fact, fact) >= 0.9)) return 'duplicate';
         let witnesses = 'present';
-        if (Array.isArray(it.witnesses)) witnesses = it.witnesses.map(resolve).filter(Boolean);
+        if (memory) witnesses = [];
+        else if (Array.isArray(it.witnesses)) witnesses = it.witnesses.map(resolve).filter(Boolean);
         return {
-            fact, quote: str(it.quote), certainty: CERTAINTY.includes(it.certainty) ? it.certainty : 'implied',
+            fact, quote, certainty: CERTAINTY.includes(it.certainty) ? it.certainty : 'implied',
+            ...(memory ? { memory } : {}),
             weight, ...(kw ? { kind } : {}), witnesses, secret: it.secret === true,
         };
     });
@@ -478,7 +492,8 @@ export function validateTracking(raw, ctx) {
             delta.readings.push({ ending: r.ending, reading: r.reading, quote: quoted ? str(r.quote) : '', exchange });
             accepted++;
         }
-        for (const m of arr(src.marks)) {
+        const marks = [...arr(src.marks)].sort((a, b) => Number(a?.source === 'memory') - Number(b?.source === 'memory'));
+        for (const m of marks) {
             if (!isObj(m)) { reject('spine', 'mark: not an object', m); continue; }
             if (!arr(sp.criterionIds).includes(m.id)) { reject('spine', 'mark: criterion not on offer', m); continue; }
             if (m.mark !== 'met' && m.mark !== 'failed') { reject('spine', 'mark: unknown value', m); continue; }
@@ -498,13 +513,16 @@ export function validateTracking(raw, ctx) {
             // Only an event that happens, or a state plainly shown, counts toward "met"; a hint is noted as refused.
             const evidence = TRACKER_EVIDENCE.includes(m.evidence) ? m.evidence : '';
             if (m.mark === 'met' && evidence !== 'occurred' && evidence !== 'shown') { reject('spine', evidence ? 'met: implied evidence does not count' : 'met: no evidence kind', m); continue; }
-            const exchange = placeQuote(m.quote, m.exchange);
-            if (!exchange) { reject('spine', 'mark: quote not in the reply', m); continue; }
+            const recalled = m.source === 'memory';
+            const quote = str(m.quote);
+            const memory = recalled && m.mark === 'met' ? memoryEvidence(quote, ctx.memory) : null;
+            const exchange = recalled ? (memory ? count : 0) : placeQuote(m.quote, m.exchange);
+            if (!exchange) { reject('spine', recalled ? 'mark: needs a quote from the earlier memory for a met criterion' : 'mark: quote not in the reply', m); continue; }
             // A lasting state needs two different exchanges. A valid second one completes it; otherwise it is partly shown.
             let partial = false;
             let also;
             if (m.mark === 'met' && arr(sp.lastingIds).includes(m.id)) {
-                const second = isObj(m.also) ? placeQuote(m.also.quote, m.also.exchange) : 0;
+                const second = !memory && isObj(m.also) && m.also.source !== 'memory' ? placeQuote(m.also.quote, m.also.exchange) : 0;
                 partial = !(second && second !== exchange);
                 if (!partial) {
                     const speaker = speakerOf(m.also.by ?? m.by, texts[second - 1], m.also.quote);
@@ -513,8 +531,8 @@ export function validateTracking(raw, ctx) {
             }
             seenMark.add(m.id);
             delta.marks.push({
-                id: m.id, mark: m.mark, quote: str(m.quote), exchange, ...(evidence ? { evidence } : {}),
-                ...((who) => (who ? { speaker: who } : {}))(speakerOf(m.by, texts[exchange - 1], m.quote)),
+                id: m.id, mark: m.mark, quote, exchange, ...(evidence ? { evidence } : {}), ...(memory ? { memory } : {}),
+                ...((who) => (who ? { speaker: who } : {}))(speakerOf(m.by, memory ? ctx.memory.text : texts[exchange - 1], quote)),
                 ...(partial ? { partial: true } : {}), ...(also ? { also } : {}), ...(m.mark === 'failed' ? { reason } : {}),
             });
             accepted++;

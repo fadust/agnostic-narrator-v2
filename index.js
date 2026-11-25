@@ -173,7 +173,7 @@ const host = {
     loreKeys: () => loreKeys,
     loreEntries: () => loreEntries,
     castNames: () => castCards().map(card => card.name),
-    memoryStory: () => memoryStory(settings),
+    memoryStory: options => memoryStory(settings, options),
     call: (...args) => modelCall(...args),
     generating: () => generating,
     // A part of the director starts failing, or answers again (audit, 22 Nov 2026: failures were silent).
@@ -883,6 +883,17 @@ async function runDirectorCommand(text, epoch) {
             if (!director.playerOp({ kind: 'instruction', text: rest || 're-plan from where the story stands', ...(rest ? {} : { quiet: true }) })) return 'Start a story before re-planning.';
             scheduleKick(50);
             return 'Re-plan requested.';
+        case 'checkplan': {
+            const result = await director.exclusive(() => director.checkQueuedPlan());
+            if (!director.owns(epoch)) return CHAT_CHANGED;
+            if (result.status === 'empty') return 'There are no queued beats to check.';
+            if (result.status === 'changed') return 'The chat or queue changed during the check. Run /director checkplan again.';
+            if (result.status === 'failed') return 'The plan check failed. See the Log tab for details.';
+            const { total, updated, skipped, remaining, memorySource, memoryUnavailable } = result;
+            const changes = [updated && `${updated} updated`, skipped && `${skipped} skipped`, remaining && `${remaining} still flagged`].filter(Boolean);
+            const memory = memorySource ? ` Used ${memorySource}.` : memoryUnavailable ? ' External memory was unavailable.' : '';
+            return `Checked ${total} queued ${total === 1 ? 'beat' : 'beats'}. ${changes.length ? changes.join(', ') + '.' : 'No changes needed.'}${memory}`;
+        }
         case 'rollup': {
             const saved = await director.exclusive(() => director.maybeRollUp(true));
             if (!director.owns(epoch)) return CHAT_CHANGED;
@@ -1040,6 +1051,7 @@ function registerCommand() {
 <li><code>/director settle &lt;text&gt;</code> – close a matter so the story stops pressing it; <code>/director unsettle</code> lists and reopens</li>
 <li><code>/director spine</code> – draft the story spine (endings and milestones) now, or redraft it</li>
 <li><code>/director track</code> – check the spine against the latest replies now, without waiting for the next batch</li>
+<li><code>/director checkplan</code> – check the queued beats and save any corrections</li>
 <li><code>inspect, profile, confirm, replan, rollup, opening, suggest, setup, retry, dump, on, off</code></li></ul>`,
     }));
 }

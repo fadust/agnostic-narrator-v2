@@ -4,6 +4,7 @@
 // or fights the story's genre after the check is dropped (owner decision, 18 Nov 2026).
 
 import { rotate } from './planner.js';
+import { normalise } from './text.js';
 import { arr, clip, isObj, nameKey, str } from './util.js';
 
 /** Flags that need a rewrite. `script` and `genre` beats are dropped when no accepted rewrite clears them. */
@@ -264,7 +265,7 @@ export function planCheckContext(state, loreKeys = []) {
  * Code fixes and flags on a validated plan (not changed; a copy is returned). Beats are given ids b1, b2... by position.
  * @returns {{plan: object, flags: {id: string, goal: string, pressure: string, codes: string[], reasons: string[]}[], fixed: string[]}}
  */
-export function checkPlan(plan, ctx) {
+export function checkPlan(plan, ctx, reorder = true) {
     const copy = JSON.parse(JSON.stringify(plan));
     const fixed = [];
     copy.beats = arr(copy.beats).map((b, n) => {
@@ -274,7 +275,7 @@ export function checkPlan(plan, ctx) {
         return b;
     });
     // A retyped choice can make three pressure beats in a row: rotate again, as the validator does.
-    if (fixed.some(f => f.includes('retyped'))) copy.beats = rotate(copy.beats, arr(ctx.beatLog));
+    if (reorder && fixed.some(f => f.includes('retyped'))) copy.beats = rotate(copy.beats, arr(ctx.beatLog));
     const flags = [];
     copy.beats.forEach((b, n) => {
         const f = flagBeat(b, ctx);
@@ -302,16 +303,30 @@ export function applyPlanRewrites(plan, rewrites) {
  * The check call's answer: one rewrite per flagged id, refused when the rewritten beat still trips any flag that needs
  * a rewrite. Nothing usable fails.
  */
-export function validatePlanRewrites(raw, flags, plan, ctx) {
+export function validatePlanRewrites(raw, flags, plan, ctx, evidence) {
     if (!isObj(raw)) return { ok: false, error: 'not an object' };
+    if (evidence && !Array.isArray(raw.rewrites)) return { ok: false, error: 'no rewrite list' };
+    if (evidence && raw.rewrites.length === 0) return { ok: true, value: [] };
     const flagged = new Set(arr(flags).map(f => f.id));
+    const sources = evidence?.map(([, text]) => ` ${normalise(text)} `) ?? [];
     const seen = new Set();
-    const rewrites = arr(raw.rewrites).filter(isObj).map(r => ({ id: str(r.id, 10), goal: clip(r.goal, CAP), pressure: clip(r.pressure, CAP) }))
-        .filter(r => (r.goal || r.pressure) && flagged.has(r.id) && !seen.has(r.id) && seen.add(r.id))
+    const rewrites = arr(raw.rewrites).filter(isObj).map(r => ({
+        id: str(r.id, 10), goal: clip(r.goal, CAP), pressure: clip(r.pressure, CAP), evidence: str(r.evidence, 420),
+    }))
+        .filter(r => {
+            if ((!r.goal && !r.pressure) || seen.has(r.id)) return false;
+            const inQueue = /^b[1-9]\d*$/.test(r.id) && !!plan.beats[Number(r.id.slice(1)) - 1];
+            const passage = normalise(r.evidence);
+            const grounded = passage.length >= 8 && sources.some(s => s.includes(` ${passage} `));
+            if (!flagged.has(r.id) && (!inQueue || !grounded)) return false;
+            if (evidence && r.evidence && !grounded) return false;
+            seen.add(r.id);
+            return true;
+        })
         .filter(r => {
             const b = applyPlanRewrites(plan, [r]).beats[Number(r.id.slice(1)) - 1];
             return !flagBeat(b, ctx).length;
-        });
+        }).map(({ id, goal, pressure }) => ({ id, goal, pressure }));
     if (!rewrites.length) return { ok: false, error: 'no usable rewrites' };
     return { ok: true, value: rewrites };
 }
@@ -319,16 +334,18 @@ export function validatePlanRewrites(raw, flags, plan, ctx) {
 /**
  * The whole check on a validated plan: code fixes, then, only when something is flagged, one rewrite call through `ask`
  * (flags, draft) => rewrites. A failed call is reported through `onFail` and changes nothing but the drops.
- * @returns {Promise<{plan: object, fixed: string[], rewritten: string[], dropped: string[], flagged: number}>}
+ * @returns {Promise<{plan: object, fixed: string[], rewritten: string[], dropped: string[], flagged: number, remaining: number}>}
  */
-export async function reviewPlan(plan, ctx, ask, onFail = () => {}) {
-    const { plan: draft, flags, fixed } = checkPlan(plan, ctx);
+export async function reviewPlan(plan, ctx, ask, onFail = () => {}, wholeQueue = false) {
+    const { plan: draft, flags, fixed } = checkPlan(plan, ctx, !wholeQueue);
     let rewrites = [];
-    if (flags.length) {
+    if (flags.length || wholeQueue) {
         try { rewrites = arr(await ask(flags, draft)); } catch (e) { onFail(e); }
     }
     const { plan: out, dropped } = settlePlan(draft, flags, rewrites);
-    return { plan: out, fixed, rewritten: rewrites.map(r => r.id), dropped, flagged: flags.length };
+    const rewritten = rewrites.map(r => r.id);
+    const remaining = flags.filter(f => !rewritten.includes(f.id) && !dropped.includes(f.id)).length;
+    return { plan: out, fixed, rewritten, dropped, flagged: flags.length, remaining };
 }
 
 /**

@@ -1,5 +1,5 @@
 // Bare phrases remain story directions. Only recognized complete forms invoke a command.
-const bare = new Set(['on', 'off', 'inspect', 'profile', 'confirm', 'replan', 'rollup', 'track', 'spine',
+const bare = new Set(['on', 'off', 'inspect', 'profile', 'confirm', 'replan', 'checkplan', 'rollup', 'track', 'spine',
     'redraft', 'opening', 'setup', 'retry', 'dump', 'suggest', 'unsettle', 'pg', 'explicit']);
 const prompts = new Set(['scene', 'beats', 'rewrite', 'retcon', 'replan']);
 

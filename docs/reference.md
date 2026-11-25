@@ -19,6 +19,7 @@ All commands begin with `/director`. Anything that is not a keyword is a free-te
 | `/director confirm` | Accept the story profile as it stands |
 | `/director revise genre <instruction>` | Have the profile revised by instruction |
 | `/director replan` | Force a re-plan |
+| `/director checkplan` | Review queued beats against the current scene, established facts and configured memory. Save corrections in place without drafting a new plan or generating a story turn |
 | `/director suggest` | Choose which queued beat comes next. Shows the plan |
 | `/director opening` | Offer three premises and draft an opening from the one you pick |
 | `/director rollup` | Roll up summaries now |
@@ -26,6 +27,10 @@ All commands begin with `/director`. Anything that is not a keyword is a free-te
 | `/director track` | Check the spine against the replies waiting for the tracker, now, the newest included |
 | `/director retry` | Retry failed director calls and clear their pause |
 | `/director dump` | Return the full state as JSON |
+
+For external memory, set **Who keeps the story’s memory** to **Another extension**. Use **Read the memory from** to select BaiBai Book, Summarize, a macro, or another registered provider. The command reports the source it used. If the provider is unavailable, the check uses the current scene, established facts and recent summaries.
+
+An extension can register its connector through `window.narratorDirector.registerMemoryProvider` with an `id`, a `name` and a `story({ before })` function. Full-story reads omit `before`. To supply historical context to the Observer and spine tracker, set `supportsBefore: true` and return `{ text, source, before }` with the same exclusive chat index. The text should contain only events before that index.
 
 ## Settings
 

@@ -100,6 +100,30 @@ test('a reworded Chinese fact can match a retcon without matching unrelated text
     assert.equal(similarity('Mira found the brass compass', 'Mira lost the brass compass'), 4 / 6);
 });
 
+test('historical reads only use providers that return the requested cutoff', async t => {
+    const previous = globalThis.STBaiBaiBook;
+    t.after(() => {
+        if (previous === undefined) delete globalThis.STBaiBaiBook;
+        else globalThis.STBaiBaiBook = previous;
+    });
+    const requests = [];
+    globalThis.STBaiBaiBook = { getHistory: options => {
+        requests.push(options);
+        return { before: 4, text: 'The captain arrived before reply four.' };
+    } };
+    registerMemoryProvider({ id: 'unbounded-for-history-test', story: () => {
+        throw new Error('unbounded provider must not be called for a historical read');
+    } });
+    registerMemoryProvider({ id: 'bounded-for-history-test', supportsBefore: true,
+        story: ({ before }) => ({ before, text: 'An earlier note from a registered provider.' }) });
+    assert.equal((await memoryStory({ memoryProvider: 'baibai' }, { before: 4 })).text, 'The captain arrived before reply four.');
+    assert.equal(await memoryStory({ memoryProvider: 'baibai' }, { before: 5 }), null);
+    assert.deepEqual(requests, [{ before: 4 }, { before: 5 }]);
+    assert.equal(await memoryStory({ memoryProvider: 'unbounded-for-history-test' }, { before: 4 }), null);
+    assert.equal(await memoryStory({ memoryProvider: 'macro', memoryMacro: 'summary' }, { before: 4 }), null);
+    assert.equal((await memoryStory({ memoryProvider: 'bounded-for-history-test' }, { before: 6 })).before, 6);
+});
+
 test('a configured dotted tag is matched literally and leaves similar named tags intact', () => {
     const text = 'Before\n<STORY.NOTES roll="1">private notes</story.notes>\n<storyXnotes>Keep this story text.</storyXnotes><story.notes/>\nAfter';
     const result = stripTags(text, ['story.notes']);

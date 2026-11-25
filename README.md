@@ -8,7 +8,7 @@ Needs SillyTavern 1.19.0 or later. The card uses the macro engine for genre guid
 
 - **One narrator for any story.** The narrator has no house style: genre, voice and pace come from your cards and lore.
 - **A record that follows the chat.** Swipe, edit, delete or branch, and the director's state follows, because it is rebuilt from the chat's own messages.
-- **Facts with evidence.** A change is recorded only if the director can quote the narrator's reply for it.
+- **Facts with evidence.** The Director quotes the reply for current events. An earlier fact can come from confirmed memory evidence.
 - **Planning without railroading.** The narrator sees one opening with a condition, never the plan, and your message always comes first.
 - **A story spine.** The question your setup poses, its possible endings and the milestones on the way. All endings stay open; the director tracks which way the story leans.
 - **Characters who remember what you did.** Feelings move with deeds, not words. Each character keeps wants of their own. A person known only by a role ("the hall master") becomes a character once they speak, and keeps the role as another name when their own name comes out.
@@ -85,7 +85,7 @@ On a 47-turn test chat the director made about 2.3 calls per turn, or 4 to 5 on 
 
 ## Status
 
-The current candidate is `0.3.0-rc.5`. The Director checks each proposed beat outcome and quoted spine mark against the exact goal or criterion before recording it. See the [change catalog](CHANGELOG.md) and the [V2 verification record](docs/v2-verification.md).
+The current candidate is `0.3.0-rc.6`. The Director can check queued beats with `/director checkplan` and verify facts and criteria against earlier evidence from BaiBai Book or another provider with historical reads. See the [change catalog](CHANGELOG.md) and the [V2 verification record](docs/v2-verification.md).
 
 ## Licence
 

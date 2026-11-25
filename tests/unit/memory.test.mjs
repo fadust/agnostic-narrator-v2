@@ -107,6 +107,78 @@ test('planner memory: the extension record, the last 2 replies, lag is no gap, r
     assert.match(director, /## Story so far\nsummary 1/, 'director mode is unchanged');
 });
 
+test('confirmed memory quotes can establish facts and criteria, with the earlier story bound to the evidence', async () => {
+    const earlier = 'The captain signed the old order.';
+    const chat = [user('Open the story.'), narr('The captain inspects the watch.'), user('I ask about the watch.'),
+        narr('The captain sets the fresh order on the table.'), user('I look at it.')];
+    const { director, host, state } = makeHost(chat, { settings: { memory: 'extension' } });
+    director.sync();
+    logOp(chat[0], { kind: 'spine', by: 'setup', value: { question: 'What will the captain do?', endings: [], milestones: [
+        { id: 'm1', title: 'The captain signs', status: 'open', criteria: [
+            { id: 'm1-c1', text: 'The captain signs the old order', mark: 'open' },
+            { id: 'm1-c2', text: 'The watch closes the harbor', mark: 'open' },
+        ] },
+    ] } });
+    const queries = [];
+    host.memoryStory = ({ before }) => {
+        queries.push(before);
+        return { before, text: `${earlier} The captain visits the market.`, source: 'BaiBai Book' };
+    };
+    host.call = async (module, messages) => {
+        state.calls.push({ module, messages });
+        if (module === 'observer') return JSON.stringify({ summary: chat[3].mes, facts: [
+            { fact: 'The fresh order is on the table.', quote: chat[3].mes, certainty: 'stated' },
+            { fact: earlier, quote: earlier, source: 'memory', certainty: 'stated' },
+            { fact: 'The watch seized the market.', quote: 'The captain visits the market.', source: 'memory', certainty: 'stated' },
+        ] });
+        if (module === 'observer-memory-check') return JSON.stringify({ verdicts: [
+            { id: 'f1', verdict: 'confirm' }, { id: 'f2', verdict: 'reject', reason: 'a visit does not show a seizure' },
+        ] });
+        if (module === 'tracker') return JSON.stringify({ marks: [
+            { id: 'm1-c1', mark: 'met', evidence: 'occurred', source: 'memory', quote: earlier },
+            { id: 'm1-c2', mark: 'met', evidence: 'occurred', source: 'memory', quote: 'The watch closed the harbor.' },
+        ] });
+        return JSON.stringify({ verdicts: [{ id: 'm1-c1', verdict: 'confirm' }] });
+    };
+    assert.equal(await director.observe(director.readings().entries[3]), true);
+    assert.equal(await director.track([director.readings().entries[3]]), true);
+    assert.deepEqual(queries, [3, 3]);
+    assert.deepEqual(state.calls.map(c => c.module), ['observer', 'observer-memory-check', 'tracker', 'tracker-check']);
+    for (const call of state.calls) assert.ok(call.messages[1].content.includes('BaiBai Book'));
+    const result = director.view();
+    assert.equal(result.canon.length, 2);
+    const fact = result.canon.find(f => f.memory);
+    assert.deepEqual(fact.memory, { source: 'BaiBai Book', before: 3 });
+    assert.deepEqual(fact.witnesses, []);
+    const [met, open] = result.spine.milestones[0].criteria;
+    assert.equal(met.mark, 'met');
+    assert.deepEqual(met.memory, fact.memory);
+    assert.equal(open.mark, 'open');
+    assert.match(JSON.stringify(chat[3].extra.narrator.track.rejected), /needs a quote from the earlier memory/);
+    assert.deepEqual(makeHost(structuredClone(chat)).director.view().canon, result.canon);
+    chat[0].mes = 'Start a different scene.';
+    const afterEdit = director.view();
+    assert.deepEqual(afterEdit.canon.map(f => f.fact), ['The fresh order is on the table.']);
+    assert.equal(afterEdit.spine.milestones[0].criteria[0].mark, 'open');
+});
+
+test('a spine redraft uses the selected external memory with its source', async () => {
+    const chat = SUMMARISED();
+    logOp(chat[0], { kind: 'arc', by: 'setup', value: { goal: 'Settle the pilot’s debt', forces: ['the watch'], act: 1, tension: 'low' } });
+    const { director, host, state } = makeHost(chat, { settings: { memory: 'extension' } });
+    host.material = async () => 'The pilot owes the watch, but the watch has withheld the ship and stopped her family from leaving port.';
+    host.memoryStory = async () => ({ source: 'A registered notebook', text: 'The watch has returned the ship but still holds the crew.' });
+    host.call = async (module, messages) => {
+        state.calls.push({ module, messages });
+        return JSON.stringify({ question: 'Can the crew go free?', endings: [
+            { title: 'Paid', criteria: ['The pilot holds a receipt'] },
+            { title: 'Released', criteria: ['The crew leaves the port'] },
+        ], milestones: [{ title: 'The watch yields', criteria: ['The watch gives up its hold on the crew'] }] });
+    };
+    assert.equal(await director.ensureSpine(true), true);
+    assert.match(state.calls[0].messages[1].content, /Earlier story memory \(A registered notebook\)\nThe watch has returned the ship/);
+});
+
 test('the planner plans without the extension when it is missing, throws or is slow', async () => {
     for (const memoryStory of [null, () => { throw new Error('boom'); }, () => new Promise(r => setTimeout(() => r({ text: 'late' }), 200))]) {
         const chat = SUMMARISED();

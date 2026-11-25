@@ -41,6 +41,21 @@ test('a lasting state needs two different exchanges: one is partly shown, a seco
     assert.equal(crit.mark, 'met');
 });
 
+test('the same recalled showing cannot complete a lasting criterion', () => {
+    const criterion = { id: 'm1-c2', text: 'Dorothy trusts him', mark: 'open' };
+    const state = { meta: { turn: 3 }, spine: { endings: [], milestones: [{ id: 'm1', status: 'open', criteria: [criterion] }],
+        readings: [], turnedAway: [], scene: { key: null } } };
+    const memory = { source: 'BaiBai Book', before: 2 };
+    const mark = { id: criterion.id, mark: 'met', quote: 'Dorothy left the keys with him.', memory, partial: true };
+    applySpineDelta(state, { marks: [mark] }, { mid: 'r1' }, 'here');
+    applySpineDelta(state, { marks: [{ ...mark, memory: { ...memory, before: 3 } }] }, { mid: 'r2' }, 'here');
+    assert.equal(criterion.mark, 'open');
+    assert.deepEqual(criterion.partial.memory, memory);
+    assert.equal(state.spine.scene.toward, undefined);
+    applySpineDelta(state, { marks: [{ id: criterion.id, mark: 'met', quote: 'Dorothy lets him navigate the shoals.', partial: true }] }, { mid: 'r3' }, 'here');
+    assert.equal(criterion.mark, 'met');
+});
+
 test('lasting criteria are told to the tracker, by the drafter\'s flag or by their wording', () => {
     assert.equal(isLasting({ text: 'Dorothy trusts him' }), true);
     assert.equal(isLasting({ text: 'Max holds the amended writ' }), false);

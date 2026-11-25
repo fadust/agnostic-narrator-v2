@@ -8,6 +8,9 @@
 //
 // In the last two modes nothing here reaches the narrator; the narrator's memory is the extension's business.
 
+import { beatText } from './beat.js';
+import { factsInView, playerSettled } from './state.js';
+import { normalise } from './text.js';
 import { clip, str } from './util.js';
 
 export const MEMORY_MODES = ['director', 'extension', 'off'];
@@ -46,4 +49,46 @@ export function plannerMemory({ mode, state, entries = [], provided = null }) {
     out.raw = missing.filter(i => entries[i].hidden).slice(-RAW_GAPS)
         .map(i => clip(entries[i].text, RAW_PER_GAP)).filter(Boolean);
     return out;
+}
+
+/** Keep relevant passages from a long record in their original order. */
+export function memoryExcerpt(text, query, limit) {
+    const source = str(text, 1e6);
+    if (source.length <= limit) return source;
+    const words = text => normalise(text).split(' ').filter(word => word.length >= 4);
+    const terms = new Set(words(query));
+    const passages = source.split(/\r?\n+/).flatMap(line => line.match(/.{1,1000}(?:\s|$)|.{1000}/gu) ?? []);
+    const ranked = passages.map((passage, index) => ({
+        passage, index, score: new Set(words(passage).filter(word => terms.has(word))).size,
+    })).sort((a, b) => b.score - a.score || b.index - a.index);
+    const selected = [];
+    let remaining = limit;
+    for (const item of ranked) {
+        if (item.passage.length + 1 > remaining) continue;
+        selected.push(item);
+        remaining -= item.passage.length + 1;
+    }
+    return selected.sort((a, b) => a.index - b.index).map(item => item.passage).join('\n');
+}
+
+/** Supply the same bounded story records for a plan check or a spine draft. */
+export function planCheckEvidence(state, beats, memory) {
+    const query = [state.scene.location.value, ...state.scene.present, ...beats.map(b => {
+        const { goal, pressure } = beatText(b);
+        return [goal, pressure, b.precondition, b.when?.place, ...(b.when?.people ?? [])].filter(Boolean).join(' ');
+    })].filter(Boolean).join(' ');
+    const select = (text, budget) => memoryExcerpt(text, query, budget);
+    const { location, time, present } = state.scene;
+    const scene = [location.established && `Location: ${location.value}`, time.established && `Time: ${time.value}`,
+        present.length && `Present: ${present.join(', ')}`].filter(Boolean).join('\n');
+    const record = memory.mode === 'director'
+        ? [state.summaries.rolled, ...state.summaries.recent.slice(-12, -LATEST).map(s => s.text)].filter(Boolean).join('\n')
+        : memory.text;
+    return [
+        ['Current scene', clip(scene, 800)],
+        ['Settled by the player', select(playerSettled(state).map(s => s.text).join('\n'), 1200)],
+        ['Established story facts', select(factsInView(state).map(f => f.memory ? `Earlier memory (${f.memory.source}): ${f.fact}` : f.fact).join('\n'), 3200)],
+        ['Recent Director summaries', select(memory.latest.join('\n'), 1600)],
+        [memory.source ? `Earlier story memory (${memory.source})` : 'Earlier story memory', select(record, 8000)],
+    ].filter(([, text]) => text);
 }

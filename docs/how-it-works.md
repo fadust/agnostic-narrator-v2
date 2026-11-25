@@ -54,7 +54,7 @@ Because step 4 happens after the reply is on screen, the director adds no wait b
 
 The observer returns JSON: facts, scene, relationships, statuses, threads, lore drafts, contradictions. Nothing it returns is applied directly. `validate.js` checks each item:
 
-- **The quote.** Each item carries a passage copied from the reply. Code looks for it, after stripping markup and punctuation. No match, no item.
+- **The quote.** Each item carries a passage copied from its source. An earlier fact can cite the selected memory with a confirming verdict. Current events still need evidence from the reply. Code checks that the passage exists in the cited source.
 - **Allowed values.** Axes, directions, weights and the rest come from fixed lists.
 - **Names.** "The player", a first name or a fuller name resolve to one known character. A name matching two is refused.
 - **Caps.** One reply can add only so much.
@@ -73,6 +73,7 @@ The planner drafts it once, after the arc, from the same material as the story p
 
 - **Endings never close.** A failed criterion lowers that ending's progress, and the planner suggests an alternative by another route: a refusal from one house is not a refusal from every house.
 - **A second check for quoted claims.** One call on the tracker's profile checks each proposed criterion mark and milestone turning point against its quote, nearby text, and speaker. Each claim needs its own confirming verdict. Criteria settled by an explicit player decision still use the settled matter's ID.
+- **Earlier memory.** A confirmed quote from the selected memory can establish that a criterion was already met. A lasting criterion can use memory for one showing and a separate reply for the second. A recalled mark can resolve the checklist while the current scene’s direction still comes from the current exchanges.
 - **Skipped milestones.** When a later milestone concludes while an earlier one is open, the earlier one is skipped: no conclusion, no chapter, and it leaves the tracker and planner. It can be reopened on the Plan tab.
 - **Milestones conclude** when every criterion is met or failed, or on "Conclude now". A short conclusion is written from the marks and quotes, and the checklist is dropped. The conclusion is logged on the reply that resolved the milestone, so swiping that reply reopens it.
 - **State is judged per scene,** never by counting replies. A scene ends when the place changes or the planner's scene runs out of beats; a re-plan never ends one by itself, so a drifting stretch cannot set off a re-plan on every reply. Anything built toward an ending or milestone in the scene means building; a scene that closes with nothing built means drifting (but not while some of its replies still wait for the tracker); a quoted "against" turns that ending away. Drifting, a failed ending criterion, and turning from every ending each ask the planner for a new plan.
@@ -82,7 +83,7 @@ The planner drafts it once, after the arc, from the same material as the story p
 
 | Kind | Holds | Reaches the narrator as |
 | --- | --- | --- |
-| Canon | What the narration stated, with quotes | Cast lines, `watch`, summaries, lore |
+| Canon | Quoted narration and confirmed earlier facts from memory | Cast lines, `watch`, summaries, lore |
 | Unconfirmed | What was hinted or rumoured, and off-screen outcomes | Nothing, until narration confirms it |
 | Plan | Beats that might happen | One `scene_intent` at a time |
 | Spine | Endings and milestones with their checklists | Only concluded milestones, as "Chapters so far" |
@@ -116,6 +117,10 @@ The observer quotes the narrator's reply for a world outcome and the player's ow
 The planner runs when the openings run out or threads run low, when you go off-plan, when the scene stalls (N replies recording nothing new), when the spine says you are drifting, and when you ask. Timed re-plans are off by default.
 
 **Plan check.** Code flags each new plan: beats that script the player, copy a spine criterion into the opening, offer a "choice" with no choice, clash with a known name, rest on a time already past, or fight the story's avoid list or lethality. Hollow choices are retyped and past times dropped in code. Only when something needs rewriting does one cheap call rewrite the flagged beats. A rewrite that still trips a flag is refused. If the rewrite fails, beats that script the player or fight the story's profile are dropped.
+
+Run `/director checkplan` to review the existing queue in one checker call. It reads the current scene, established facts and the selected story memory provider, such as BaiBai Book, SillyTavern Summarize, a configured macro or a registered provider. The checker quotes its source when making a continuity correction. It saves accepted corrections under existing beat IDs and skips beats that still violate the agency or genre rules. The command preserves queue order and progress. If the checker call fails, the queue stays as it was.
+
+Planning, flagged-beat rewrites, and spine drafting and redrafting use the selected memory alongside the Director’s records. The Observer and spine tracker request earlier memory from a provider that can stop before the reply or batch being read. BaiBai Book supports this through its history API. Confirmed memory quotes can establish earlier facts and mark criteria met. The Director records their provider and cutoff. Beat progress, scene changes and ending readings keep their original evidence rules. When a source is missing, slow, or cannot supply the requested cutoff, the Director continues from the local story record.
 
 **Wants.** Every cast character may have up to three lasting, high-level wants: what they live for ("a happy family", "to amass a fortune", "to be loved", "keep the inn's silence"). They may support each other or pull against each other. The spine drafts them for the people the material names, rooted in their description, the lorebook and their place in the story; the planner gives them to others, a few per plan, and changes a character's wants only when the story transforms one (achieved, lost, betrayed), saying why. No trigger, no expiry, no observer check. The narrator sees them on the cast line while the character is present; short-term wants stay in the openings. While a character is away, the planner may move one of their wants off screen as an outcome, unconfirmed until narrated. They show and edit on the Cast tab; a character whose wants you clear is left without.
 
